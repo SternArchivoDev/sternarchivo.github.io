@@ -17,8 +17,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-          - os: macos-latest
-            target: x86_64-apple-darwin
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -73,13 +71,13 @@ jobs:
           fi
           cp USER.md package/
 
-      - name: Install 7zip
+      - name: Install 7zip (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
-        # 7zip non è preinstallato su Ubuntu; su Windows/macOS useremo altri strumenti
-        # Ma il comando '7z' funziona anche su Windows se installato tramite chocolatey? 
-        # In realtà su windows-latest 7z è già presente, su macOS possiamo usare 'zip' oppure installarlo.
-        # Per semplicità ho lasciato l'installazione su Ubuntu, ma su Windows e macOS potrebbe fallire.
-        # Meglio usare uno strumento cross-platform. Vediamo sotto.
+
+      - name: Install 7zip (Windows)
+        if: runner.os == 'Windows'
+        run: choco install 7zip
 
       - name: Create 7z archive
         run: |
