@@ -54,17 +54,48 @@ jobs:
       - name: Build release binary (build only your code)
         run: cargo build --release --target ${{ matrix.target }}
 
+      # ============================================================
+      # STEP AVANZATO: Estrae la versione con metadati di build
+      # ============================================================
       - name: Get package info
         id: info
         run: |
           NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')
-          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          
+          # 1. Determina la versione di base
+          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" =~ ^v[0-9] ]]; then
+            BASE_VERSION="${{ github.ref_name }}"
+            BASE_VERSION="${BASE_VERSION#v}"  # rimuove 'v' iniziale
+          else
+            BASE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          fi
+          
+          # 2. Aggiungi metadati per prerelease (alpha/beta/rc)
+          #    Se la versione contiene alpha/beta/rc, aggiungi build number e hash commit
+          if [[ "$BASE_VERSION" =~ (alpha|beta|rc) ]]; then
+            SHORT_HASH=$(git rev-parse --short HEAD)
+            BUILD_NUM="${{ github.run_number }}"
+            FULL_VERSION="${BASE_VERSION}+build.${BUILD_NUM}.${SHORT_HASH}"
+          else
+            FULL_VERSION="${BASE_VERSION}"
+          fi
+          
+          # 3. Esponi le variabili
           echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$FULL_VERSION" >> $GITHUB_OUTPUT
+          echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
+          echo "build_date=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "run_number=${{ github.run_number }}" >> $GITHUB_OUTPUT
+        shell: bash
 
+      # ============================================================
+      # USER.md ARRICCHITO CON TUTTI I METADATI
+      # ============================================================
       - name: Create USER.md
         env:
           DEVELOPER_NAME: ${{ vars.DEVELOPER_NAME || 'The Development Team' }}
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           cat > USER.md << EOF
           # Greetings from the Developers
@@ -75,8 +106,12 @@ jobs:
           We hope it will be useful and make your work easier!
 
           - **Version:** ${{ steps.info.outputs.version }}
-          - **Build Date:** $(date '+%Y-%m-%d %H:%M:%S')
+          - **Base Version:** ${{ steps.info.outputs.base_version }}
+          - **Build Date:** ${{ steps.info.outputs.build_date }}
+          - **Commit:** ${{ steps.info.outputs.commit_hash }}
+          - **GitHub Run:** #${{ steps.info.outputs.run_number }}
           - **Platform:** ${{ matrix.target }}
+          - **Repository:** ${REPO_URL}
 
           For any questions or suggestions, feel free to contact us.
 
