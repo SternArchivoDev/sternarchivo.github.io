@@ -1,6 +1,6 @@
 [package]
 name = "neovim_config_generator"
-version = "0.0.1"
+version = "v0.0.1-alpha0"
 edition = "2021"
 
 [dependencies]
