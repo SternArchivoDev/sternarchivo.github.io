@@ -1,0 +1,56 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build (debug)
+      run: cargo build --verbose
+
+    - name: Run tests
+      run: cargo test --verbose
+
+    - name: Extract package metadata
+      id: meta
+      run: |
+        metadata=$(cargo metadata --format-version=1 --no-deps)
+        name=$(echo "$metadata" | jq -r '.packages[0].name')
+        version=$(echo "$metadata" | jq -r '.packages[0].version')
+        bin_name=$(echo "$metadata" | jq -r '.packages[0].targets[] | select(.kind[] == "bin") | .name' | head -n1)
+        if [ -z "$bin_name" ]; then
+          bin_name="$name"
+        fi
+        echo "name=$name" >> $GITHUB_OUTPUT
+        echo "version=$version" >> $GITHUB_OUTPUT
+        echo "bin_name=$bin_name" >> $GITHUB_OUTPUT
+
+    - name: Build release binary
+      run: cargo build --release
+
+    - name: Create distribution package
+      run: |
+        mkdir -p dist
+        # Copia l'eseguibile rinominandolo con il solo nome del package
+        cp target/release/${{ steps.meta.outputs.bin_name }} dist/${{ steps.meta.outputs.name }}
+        # Crea un archivio con nome "package.name-package.version.tar.gz"
+        tar -czf ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz -C dist ${{ steps.meta.outputs.name }}
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        # Il nome dell'artifact è "package.name-package.version"
+        name: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}
+        path: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
