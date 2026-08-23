@@ -17,23 +17,33 @@ jobs:
       matrix:
         target:
           - x86_64-unknown-linux-gnu
-          - x86_64-pc-windows-gnu   # Cross‑compilazione per Windows
+          - x86_64-pc-windows-gnu   # Cross‑compilazione per Windows (MinGW)
     steps:
+      # ============================================================
+      # 1. Checkout del codice
+      # ============================================================
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # ============================================================
+      # 2. Installazione Rust e target
+      # ============================================================
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
 
-      # Installa il linker MinGW per Windows (solo se il target è Windows)
+      # ============================================================
+      # 3. Installazione MinGW (solo per Windows)
+      # ============================================================
       - name: Install MinGW (for Windows cross‑compile)
         if: matrix.target == 'x86_64-pc-windows-gnu'
         run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
 
-      # (Opzionale) Usa cargo-chef per una cache più efficiente
+      # ============================================================
+      # 4. Cache con cargo-chef (ottimizzazione)
+      # ============================================================
       - name: Install cargo-chef
         run: cargo install cargo-chef
 
@@ -48,30 +58,32 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-chef-
 
-      - name: Cook dependencies (build only deps)
+      # ============================================================
+      # 5. Compilazione (dipendenze + codice)
+      # ============================================================
+      - name: Cook dependencies
         run: cargo chef cook --release --recipe-path recipe.json --target ${{ matrix.target }}
 
-      - name: Build release binary (build only your code)
+      - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
 
       # ============================================================
-      # STEP AVANZATO: Estrae la versione con metadati di build
+      # 6. Estrazione metadati (versione, commit, run)
       # ============================================================
       - name: Get package info
         id: info
         run: |
           NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')
           
-          # 1. Determina la versione di base
+          # Versione di base: da tag (se presente) o da Cargo.toml
           if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" =~ ^v[0-9] ]]; then
             BASE_VERSION="${{ github.ref_name }}"
-            BASE_VERSION="${BASE_VERSION#v}"  # rimuove 'v' iniziale
+            BASE_VERSION="${BASE_VERSION#v}"
           else
             BASE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
           fi
           
-          # 2. Aggiungi metadati per prerelease (alpha/beta/rc)
-          #    Se la versione contiene alpha/beta/rc, aggiungi build number e hash commit
+          # Per prerelease (alpha/beta/rc) aggiunge build+run+commit
           if [[ "$BASE_VERSION" =~ (alpha|beta|rc) ]]; then
             SHORT_HASH=$(git rev-parse --short HEAD)
             BUILD_NUM="${{ github.run_number }}"
@@ -80,7 +92,6 @@ jobs:
             FULL_VERSION="${BASE_VERSION}"
           fi
           
-          # 3. Esponi le variabili
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "version=$FULL_VERSION" >> $GITHUB_OUTPUT
           echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
@@ -90,7 +101,7 @@ jobs:
         shell: bash
 
       # ============================================================
-      # USER.md ARRICCHITO CON TUTTI I METADATI
+      # 7. Generazione USER.md (metadati per l'utente)
       # ============================================================
       - name: Create USER.md
         env:
@@ -119,17 +130,27 @@ jobs:
           The Development Team
           EOF
 
+      # ============================================================
+      # 8. Preparazione package (binario + USER.md + README.md)
+      # ============================================================
       - name: Prepare package directory
         run: |
           mkdir package
-          # Copia l'eseguibile con il nome corretto (con .exe per Windows)
+          # Copia l'eseguibile (con .exe per Windows)
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
             cp target/${{ matrix.target }}/release/${{ steps.info.outputs.name }}.exe package/
           else
             cp target/${{ matrix.target }}/release/${{ steps.info.outputs.name }} package/
           fi
           cp USER.md package/
+          # Includi anche il README.md del repository (se esiste)
+          if [ -f README.md ]; then
+            cp README.md package/
+          fi
 
+      # ============================================================
+      # 9. Creazione archivio .7z
+      # ============================================================
       - name: Install 7zip (Linux)
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
@@ -138,12 +159,18 @@ jobs:
           cd package
           7z a -t7z -mx=9 -mfb=273 -ms=on -mmt=on ../${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z *
 
+      # ============================================================
+      # 10. Upload artifact (per testing)
+      # ============================================================
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}
           path: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z
 
+      # ============================================================
+      # 11. Upload su release (solo se attivato da tag)
+      # ============================================================
       - name: Upload to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
