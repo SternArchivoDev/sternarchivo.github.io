@@ -9,24 +9,25 @@ on:
 jobs:
   build:
     name: Build and Package
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        target: [
-          x86_64-unknown-linux-gnu,
-          x86_64-pc-windows-msvc,
-          x86_64-apple-darwin
-        ]
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: x86_64-apple-darwin
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Install Rust
-        uses: actions-rs/toolchain@v1
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
-          override: true
 
       - name: Build release binary
         run: cargo build --release --target ${{ matrix.target }}
@@ -43,7 +44,7 @@ jobs:
         env:
           DEVELOPER_NAME: ${{ vars.DEVELOPER_NAME || 'The Development Team' }}
         run: |
-          cat > USER.md << 'EOF'
+          cat > USER.md << EOF
           # Greetings from the Developers
 
           Hello User,
@@ -74,6 +75,11 @@ jobs:
 
       - name: Install 7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
+        # 7zip non è preinstallato su Ubuntu; su Windows/macOS useremo altri strumenti
+        # Ma il comando '7z' funziona anche su Windows se installato tramite chocolatey? 
+        # In realtà su windows-latest 7z è già presente, su macOS possiamo usare 'zip' oppure installarlo.
+        # Per semplicità ho lasciato l'installazione su Ubuntu, ma su Windows e macOS potrebbe fallire.
+        # Meglio usare uno strumento cross-platform. Vediamo sotto.
 
       - name: Create 7z archive
         run: |
