@@ -6,6 +6,9 @@ on:
       - 'v*'               # Trigger su tag come v0.1.0, v1.2.3
   workflow_dispatch:       # Permette esecuzione manuale dalla UI di GitHub
 
+permissions:
+  contents: write
+  
 jobs:
   build:
     name: Build and Package
