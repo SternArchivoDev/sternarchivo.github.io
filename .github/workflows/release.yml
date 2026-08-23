@@ -8,18 +8,16 @@ on:
 
 permissions:
   contents: write
-  
+
 jobs:
   build:
     name: Build and Package
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-pc-windows-gnu   # Cross‑compilazione per Windows
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -30,7 +28,30 @@ jobs:
           toolchain: stable
           target: ${{ matrix.target }}
 
-      - name: Build release binary
+      # Installa il linker MinGW per Windows (solo se il target è Windows)
+      - name: Install MinGW (for Windows cross‑compile)
+        if: matrix.target == 'x86_64-pc-windows-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+
+      # (Opzionale) Usa cargo-chef per una cache più efficiente
+      - name: Install cargo-chef
+        run: cargo install cargo-chef
+
+      - name: Prepare recipe
+        run: cargo chef prepare --recipe-path recipe.json
+
+      - name: Cache dependencies with chef
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: ${{ runner.os }}-${{ matrix.target }}-chef-${{ hashFiles('recipe.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target }}-chef-
+
+      - name: Cook dependencies (build only deps)
+        run: cargo chef cook --release --recipe-path recipe.json --target ${{ matrix.target }}
+
+      - name: Build release binary (build only your code)
         run: cargo build --release --target ${{ matrix.target }}
 
       - name: Get package info
@@ -66,7 +87,7 @@ jobs:
       - name: Prepare package directory
         run: |
           mkdir package
-          # Copia l'eseguibile con il nome corretto
+          # Copia l'eseguibile con il nome corretto (con .exe per Windows)
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
             cp target/${{ matrix.target }}/release/${{ steps.info.outputs.name }}.exe package/
           else
@@ -75,12 +96,7 @@ jobs:
           cp USER.md package/
 
       - name: Install 7zip (Linux)
-        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
-
-      - name: Install 7zip (Windows)
-        if: runner.os == 'Windows'
-        run: choco install 7zip
 
       - name: Create 7z archive
         run: |
