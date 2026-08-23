@@ -1,0 +1,97 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'               # Trigger su tag come v0.1.0, v1.2.3
+  workflow_dispatch:       # Permette esecuzione manuale dalla UI di GitHub
+
+jobs:
+  build:
+    name: Build and Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [
+          x86_64-unknown-linux-gnu,
+          x86_64-pc-windows-msvc,
+          x86_64-apple-darwin
+        ]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: ${{ matrix.target }}
+          override: true
+
+      - name: Build release binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Get package info
+        id: info
+        run: |
+          NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create USER.md
+        env:
+          DEVELOPER_NAME: ${{ vars.DEVELOPER_NAME || 'The Development Team' }}
+        run: |
+          cat > USER.md << 'EOF'
+          # Greetings from the Developers
+
+          Hello User,
+
+          This program has been carefully developed by **${DEVELOPER_NAME}**.
+          We hope it will be useful and make your work easier!
+
+          - **Version:** ${{ steps.info.outputs.version }}
+          - **Build Date:** $(date '+%Y-%m-%d %H:%M:%S')
+          - **Platform:** ${{ matrix.target }}
+
+          For any questions or suggestions, feel free to contact us.
+
+          Enjoy your work!
+          The Development Team
+          EOF
+
+      - name: Prepare package directory
+        run: |
+          mkdir package
+          # Copia l'eseguibile con il nome corretto
+          if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+            cp target/${{ matrix.target }}/release/${{ steps.info.outputs.name }}.exe package/
+          else
+            cp target/${{ matrix.target }}/release/${{ steps.info.outputs.name }} package/
+          fi
+          cp USER.md package/
+
+      - name: Install 7zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      - name: Create 7z archive
+        run: |
+          cd package
+          7z a -t7z -mx=9 -mfb=273 -ms=on -mmt=on ../${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z *
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}
+          path: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z
+
+      - name: Upload to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
