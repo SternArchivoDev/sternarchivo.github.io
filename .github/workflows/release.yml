@@ -3,180 +3,106 @@ name: Build and Release
 on:
   push:
     tags:
-      - 'v*'               # Trigger su tag come v0.1.0, v1.2.3
-  workflow_dispatch:       # Permette esecuzione manuale dalla UI di GitHub
+      - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build and Package
+    name: Build Release
     runs-on: ubuntu-latest
     strategy:
       matrix:
         target:
           - x86_64-unknown-linux-gnu
-          - x86_64-pc-windows-gnu   # Cross‑compilazione per Windows (MinGW)
+          - x86_64-pc-windows-gnu
+
     steps:
-      # ============================================================
-      # 1. Checkout del codice
-      # ============================================================
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      # ============================================================
-      # 2. Installazione Rust e target
-      # ============================================================
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: stable
           target: ${{ matrix.target }}
 
-      # ============================================================
-      # 3. Installazione MinGW (solo per Windows)
-      # ============================================================
-      - name: Install MinGW (for Windows cross‑compile)
+      - name: Install MinGW (Windows only)
         if: matrix.target == 'x86_64-pc-windows-gnu'
-        run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-mingw-w64-x86-64
 
-      # ============================================================
-      # 4. Cache con cargo-chef (ottimizzazione)
-      # ============================================================
-      - name: Install cargo-chef
-        run: cargo install cargo-chef
-
-      - name: Prepare recipe
-        run: cargo chef prepare --recipe-path recipe.json
-
-      - name: Cache dependencies with chef
-        uses: actions/cache@v4
-        with:
-          path: target
-          key: ${{ runner.os }}-${{ matrix.target }}-chef-${{ hashFiles('recipe.json') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ matrix.target }}-chef-
-
-      # ============================================================
-      # 5. Compilazione (dipendenze + codice)
-      # ============================================================
-      - name: Cook dependencies
-        run: cargo chef cook --release --recipe-path recipe.json --target ${{ matrix.target }}
-
-      - name: Build release binary
+      - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
 
-      # ============================================================
-      # 6. Estrazione metadati (versione, commit, run)
-      # ============================================================
-      - name: Get package info
-        id: info
+      - name: Extract version
+        id: version
         run: |
-          NAME=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].name')
-          
-          # Versione di base: da tag (se presente) o da Cargo.toml
-          if [[ "${{ github.ref_type }}" == "tag" && "${{ github.ref_name }}" =~ ^v[0-9] ]]; then
-            BASE_VERSION="${{ github.ref_name }}"
-            BASE_VERSION="${BASE_VERSION#v}"
+          # Da tag: v1.2.3 → 1.2.3
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
           else
-            BASE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+            # Da Cargo.toml
+            VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
           fi
           
-          # Per prerelease (alpha/beta/rc) aggiunge build+run+commit
-          if [[ "$BASE_VERSION" =~ (alpha|beta|rc) ]]; then
-            SHORT_HASH=$(git rev-parse --short HEAD)
-            BUILD_NUM="${{ github.run_number }}"
-            FULL_VERSION="${BASE_VERSION}+build.${BUILD_NUM}.${SHORT_HASH}"
-          else
-            FULL_VERSION="${BASE_VERSION}"
-          fi
-          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Binary version: $VERSION"
+
+      - name: Get package name
+        id: package
+        run: |
+          NAME=$(grep '^name' Cargo.toml | head -1 | cut -d'"' -f2)
           echo "name=$NAME" >> $GITHUB_OUTPUT
-          echo "version=$FULL_VERSION" >> $GITHUB_OUTPUT
-          echo "base_version=$BASE_VERSION" >> $GITHUB_OUTPUT
-          echo "build_date=$(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_OUTPUT
-          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "run_number=${{ github.run_number }}" >> $GITHUB_OUTPUT
-        shell: bash
 
-      # ============================================================
-      # 7. Generazione USER.md (metadati per l'utente)
-      # ============================================================
-      - name: Create USER.md
-        env:
-          DEVELOPER_NAME: ${{ vars.DEVELOPER_NAME || 'The Development Team' }}
-          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+      - name: Prepare package
         run: |
-          cat > USER.md << EOF
-          # Greetings from the Developers
-
-          Hello User,
-
-          This program has been carefully developed by **${DEVELOPER_NAME}**.
-          We hope it will be useful and make your work easier!
-
-          - **Version:** ${{ steps.info.outputs.version }}
-          - **Base Version:** ${{ steps.info.outputs.base_version }}
-          - **Build Date:** ${{ steps.info.outputs.build_date }}
-          - **Commit:** ${{ steps.info.outputs.commit_hash }}
-          - **GitHub Run:** #${{ steps.info.outputs.run_number }}
-          - **Platform:** ${{ matrix.target }}
-          - **Repository:** ${REPO_URL}
-
-          For any questions or suggestions, feel free to contact us.
-
-          Enjoy your work!
-          The Development Team
-          EOF
-
-      # ============================================================
-      # 8. Preparazione package (binario + USER.md + README.md)
-      # ============================================================
-      - name: Prepare package directory
-        run: |
-          mkdir package
-          # Copia l'eseguibile (con .exe per Windows)
+          mkdir -p package
+          BIN_NAME="${{ steps.package.outputs.name }}"
+          
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
-            cp target/${{ matrix.target }}/release/${{ steps.info.outputs.name }}.exe package/
+            cp "target/${{ matrix.target }}/release/${BIN_NAME}.exe" package/
           else
-            cp target/${{ matrix.target }}/release/${{ steps.info.outputs.name }} package/
+            cp "target/${{ matrix.target }}/release/${BIN_NAME}" package/
           fi
-          cp USER.md package/
-          # Includi anche il README.md del repository (se esiste)
-          if [ -f README.md ]; then
-            cp README.md package/
-          fi
+          
+          # Metadata file
+          cat > package/BUILD_INFO.txt << EOF
+          Application: $BIN_NAME
+          Version: ${{ steps.version.outputs.version }}
+          Target: ${{ matrix.target }}
+          Build Date: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          Commit: $(git rev-parse --short HEAD)
+          EOF
+          
+          # Docs (se esistono)
+          [ -f README.md ] && cp README.md package/
+          [ -f LICENSE ] && cp LICENSE package/
 
-      # ============================================================
-      # 9. Creazione archivio .7z
-      # ============================================================
-      - name: Install 7zip (Linux)
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full
-
-      - name: Create 7z archive
+      - name: Create archive
         run: |
           cd package
-          7z a -t7z -mx=9 -mfb=273 -ms=on -mmt=on ../${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z *
+          tar -czf "../${{ steps.package.outputs.name }}-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz" *
+          cd ..
+          ls -lh "${{ steps.package.outputs.name }}-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz"
 
-      # ============================================================
-      # 10. Upload artifact (per testing)
-      # ============================================================
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}
-          path: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z
+          name: ${{ steps.package.outputs.name }}-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          path: ${{ steps.package.outputs.name }}-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz
+          retention-days: 5
 
-      # ============================================================
-      # 11. Upload su release (solo se attivato da tag)
-      # ============================================================
-      - name: Upload to release
+      - name: Create release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ steps.info.outputs.name }}-${{ steps.info.outputs.version }}-${{ matrix.target }}.7z
+          files: ${{ steps.package.outputs.name }}-${{ steps.version.outputs.version }}-${{ matrix.target }}.tar.gz
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'alpha') || contains(steps.version.outputs.version, 'beta') || contains(steps.version.outputs.version, 'rc') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
