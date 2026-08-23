@@ -1,0 +1,23 @@
+[package]
+name = "neovim_config_generator"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.37", features = ["full"] }
+hyper = { version = "1.3", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["server", "tokio"] }
+anyhow = "1.0"
+thiserror = "1.0"
+walkdir = "2.5"
+tempfile = "3.10"
+chrono = "0.4"
+fs_extra = "1.3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3

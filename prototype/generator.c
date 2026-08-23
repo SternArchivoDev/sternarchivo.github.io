@@ -1,0 +1,1173 @@
+/*
+ * generator.c – Neovim Configuration Generator
+ * Cross‑platform (Windows + POSIX) – with --listen, --no-comments, --keep
+ *
+ * Compile on Windows (MinGW):   gcc -o generator.exe generator.c -std=c99 -lws2_32
+ * Compile on Linux/macOS:       gcc -o generator generator.c -std=c99 -D_POSIX_C_SOURCE=200809L
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <sys/stat.h>
+
+/* ---------- Platform specific includes ---------- */
+#ifdef _WIN32
+    #include <direct.h>
+    #include <io.h>
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #include <windows.h>
+    #pragma comment(lib, "ws2_32.lib")
+    #define mkdir _mkdir
+    #define rmdir _rmdir
+    #define unlink _unlink
+    #define access _access
+    #define F_OK 0
+    #define PATH_MAX MAX_PATH
+    #define SEP '\\'
+    #define close_socket closesocket
+    typedef SOCKET socket_t;
+#else
+    #include <unistd.h>
+    #include <dirent.h>
+    #include <sys/wait.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <arpa/inet.h>
+    #define SEP '/'
+    #define close_socket close
+    typedef int socket_t;
+    #define SOCKET_ERROR -1
+    #define INVALID_SOCKET -1
+#endif
+
+#define PROGRAM_NAME    "Neovim Configuration Generator"
+#define PROGRAM_VERSION "0.0.1"
+#define ITERATION_LEVEL "alpha-0000"
+
+#define DEFAULT_LISTEN_ADDRESS "127.0.0.1"
+#define DEFAULT_LISTEN_PORT    8080
+
+/* ---------- Global options ---------- */
+static struct {
+    const char *pkg_manager;
+    bool deploy;
+    bool run;
+    char *output_dir;
+    bool force;
+    bool quiet;
+    bool dry_run;
+    bool listen;
+    char *listen_address;
+    int listen_port;
+    bool no_comments;
+    bool keep;                     /* <-- nuovo flag */
+} opts = {
+    .pkg_manager = "lazy",
+    .deploy = false,
+    .run = false,
+    .output_dir = NULL,
+    .force = false,
+    .quiet = false,
+    .dry_run = false,
+    .listen = false,
+    .listen_address = NULL,
+    .listen_port = DEFAULT_LISTEN_PORT,
+    .no_comments = false,
+    .keep = false
+};
+
+/* ---------- Utility functions (invariate) ---------- */
+static bool path_exists(const char *path) {
+#ifdef _WIN32
+    DWORD attr = GetFileAttributesA(path);
+    return (attr != INVALID_FILE_ATTRIBUTES);
+#else
+    struct stat st;
+    return (stat(path, &st) == 0);
+#endif
+}
+
+static int mkdir_p(const char *path, int mode) {
+    char tmp[PATH_MAX];
+    char *p = NULL;
+    size_t len;
+
+    snprintf(tmp, sizeof(tmp), "%s", path);
+    len = strlen(tmp);
+    if (len > 0 && (tmp[len-1] == '/' || tmp[len-1] == '\\'))
+        tmp[len-1] = '\0';
+
+    for (p = tmp + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            *p = '\0';
+            if (!path_exists(tmp)) {
+                if (
+#ifdef _WIN32
+                    mkdir(tmp)
+#else
+                    mkdir(tmp, mode)
+#endif
+                    != 0 && errno != EEXIST) {
+                    perror("mkdir");
+                    return -1;
+                }
+            }
+            *p = '/';
+        }
+    }
+    if (!path_exists(tmp)) {
+        if (
+    #ifdef _WIN32
+            mkdir(tmp)
+    #else
+            mkdir(tmp, mode)
+    #endif
+            != 0 && errno != EEXIST) {
+            perror("mkdir");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+static int copy_tree(const char *src, const char *dst) {
+#ifdef _WIN32
+    WIN32_FIND_DATAA fd;
+    char src_pattern[PATH_MAX];
+    char src_path[PATH_MAX];
+    char dst_path[PATH_MAX];
+    HANDLE hFind;
+
+    if (mkdir(dst) != 0 && errno != EEXIST) {
+        perror("mkdir");
+        return -1;
+    }
+
+    snprintf(src_pattern, sizeof(src_pattern), "%s\\*", src);
+    hFind = FindFirstFileA(src_pattern, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        perror("FindFirstFile");
+        return -1;
+    }
+
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+            continue;
+
+        snprintf(src_path, sizeof(src_path), "%s\\%s", src, fd.cFileName);
+        snprintf(dst_path, sizeof(dst_path), "%s\\%s", dst, fd.cFileName);
+
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (copy_tree(src_path, dst_path) != 0) {
+                FindClose(hFind);
+                return -1;
+            }
+        } else {
+            if (!CopyFileA(src_path, dst_path, FALSE)) {
+                fprintf(stderr, "CopyFile failed: %lu\n", GetLastError());
+                FindClose(hFind);
+                return -1;
+            }
+        }
+    } while (FindNextFileA(hFind, &fd) != 0);
+
+    FindClose(hFind);
+    return 0;
+#else
+    DIR *dir;
+    struct dirent *entry;
+    struct stat st;
+    char src_path[PATH_MAX], dst_path[PATH_MAX];
+
+    if (mkdir(dst, 0755) != 0 && errno != EEXIST) {
+        perror("mkdir");
+        return -1;
+    }
+
+    dir = opendir(src);
+    if (!dir) {
+        perror("opendir");
+        return -1;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(src_path, sizeof(src_path), "%s/%s", src, entry->d_name);
+        snprintf(dst_path, sizeof(dst_path), "%s/%s", dst, entry->d_name);
+
+        if (stat(src_path, &st) == -1) {
+            perror("stat");
+            closedir(dir);
+            return -1;
+        }
+
+        if (S_ISDIR(st.st_mode)) {
+            if (copy_tree(src_path, dst_path) != 0) {
+                closedir(dir);
+                return -1;
+            }
+        } else {
+            FILE *fin = fopen(src_path, "rb");
+            if (!fin) {
+                perror("fopen src");
+                closedir(dir);
+                return -1;
+            }
+            FILE *fout = fopen(dst_path, "wb");
+            if (!fout) {
+                perror("fopen dst");
+                fclose(fin);
+                closedir(dir);
+                return -1;
+            }
+            char buf[8192];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), fin)) > 0) {
+                if (fwrite(buf, 1, n, fout) != n) {
+                    perror("fwrite");
+                    fclose(fin);
+                    fclose(fout);
+                    closedir(dir);
+                    return -1;
+                }
+            }
+            fclose(fin);
+            fclose(fout);
+        }
+    }
+    closedir(dir);
+    return 0;
+#endif
+}
+
+static int remove_tree(const char *path) {
+#ifdef _WIN32
+    WIN32_FIND_DATAA fd;
+    char pattern[PATH_MAX];
+    char full_path[PATH_MAX];
+    HANDLE hFind;
+
+    snprintf(pattern, sizeof(pattern), "%s\\*", path);
+    hFind = FindFirstFileA(pattern, &fd);
+    if (hFind == INVALID_HANDLE_VALUE) {
+        perror("FindFirstFile");
+        return -1;
+    }
+
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+            continue;
+
+        snprintf(full_path, sizeof(full_path), "%s\\%s", path, fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            if (remove_tree(full_path) != 0) {
+                FindClose(hFind);
+                return -1;
+            }
+        } else {
+            if (!DeleteFileA(full_path)) {
+                fprintf(stderr, "DeleteFile failed: %lu\n", GetLastError());
+                FindClose(hFind);
+                return -1;
+            }
+        }
+    } while (FindNextFileA(hFind, &fd) != 0);
+
+    FindClose(hFind);
+    if (!RemoveDirectoryA(path)) {
+        fprintf(stderr, "RemoveDirectory failed: %lu\n", GetLastError());
+        return -1;
+    }
+    return 0;
+#else
+    DIR *dir;
+    struct dirent *entry;
+    char full_path[PATH_MAX];
+
+    dir = opendir(path);
+    if (!dir) {
+        perror("opendir");
+        return -1;
+    }
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        struct stat st;
+        if (stat(full_path, &st) == -1) {
+            perror("stat");
+            closedir(dir);
+            return -1;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            if (remove_tree(full_path) != 0) {
+                closedir(dir);
+                return -1;
+            }
+        } else {
+            if (unlink(full_path) != 0) {
+                perror("unlink");
+                closedir(dir);
+                return -1;
+            }
+        }
+    }
+    closedir(dir);
+    if (rmdir(path) != 0) {
+        perror("rmdir");
+        return -1;
+    }
+    return 0;
+#endif
+}
+
+static int write_file(const char *path, const char *content) {
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        perror("fopen");
+        return -1;
+    }
+    if (fprintf(f, "%s", content) < 0) {
+        perror("fprintf");
+        fclose(f);
+        return -1;
+    }
+    fclose(f);
+    return 0;
+}
+
+/* ---------- Snippets ---------- */
+static const char *lazy_snippet_commented(void) {
+    return
+        "-- [[ Bootstrap Lazy.nvim ]]\n"
+        "-- local lazypath = vim.fn.stdpath(\"data\") .. \"/lazy/lazy.nvim\"\n"
+        "-- if not vim.loop.fs_stat(lazypath) then\n"
+        "--   vim.fn.system({\n"
+        "--     \"git\", \"clone\", \"--filter=blob:none\",\n"
+        "--     \"https://github.com/folke/lazy.nvim.git\",\n"
+        "--     \"--branch=stable\", lazypath\n"
+        "--   })\n"
+        "-- end\n"
+        "-- vim.opt.rtp:prepend(lazypath)\n"
+        "--\n"
+        "-- require(\"lazy\").setup({\n"
+        "--   -- Add your plugins here, e.g.\n"
+        "--   -- { 'catppuccin/nvim', name = 'catppuccin' },\n"
+        "-- })";
+}
+
+static const char *lazy_snippet_active(void) {
+    return
+        "local lazypath = vim.fn.stdpath(\"data\") .. \"/lazy/lazy.nvim\"\n"
+        "if not vim.loop.fs_stat(lazypath) then\n"
+        "  vim.fn.system({\n"
+        "    \"git\", \"clone\", \"--filter=blob:none\",\n"
+        "    \"https://github.com/folke/lazy.nvim.git\",\n"
+        "    \"--branch=stable\", lazypath\n"
+        "  })\n"
+        "end\n"
+        "vim.opt.rtp:prepend(lazypath)\n"
+        "\n"
+        "require(\"lazy\").setup({\n"
+        "  -- Add your plugins here, e.g.\n"
+        "  -- { 'catppuccin/nvim', name = 'catppuccin' },\n"
+        "})";
+}
+
+static const char *packer_snippet_commented(void) {
+    return
+        "-- [[ Bootstrap Packer.nvim ]]\n"
+        "-- local fn = vim.fn\n"
+        "-- local install_path = fn.stdpath('data')..'/site/pack/packer/start/packer.nvim'\n"
+        "-- if fn.empty(fn.glob(install_path)) > 0 then\n"
+        "--   fn.system({'git', 'clone', '--depth', '1', 'https://github.com/wbthomason/packer.nvim', install_path})\n"
+        "-- end\n"
+        "-- vim.cmd [[packadd packer.nvim]]\n"
+        "--\n"
+        "-- require('packer').startup(function(use)\n"
+        "--   -- Add your plugins here, e.g.\n"
+        "--   -- use 'wbthomason/packer.nvim'\n"
+        "-- end)";
+}
+
+static const char *packer_snippet_active(void) {
+    return
+        "local fn = vim.fn\n"
+        "local install_path = fn.stdpath('data')..'/site/pack/packer/start/packer.nvim'\n"
+        "if fn.empty(fn.glob(install_path)) > 0 then\n"
+        "  fn.system({'git', 'clone', '--depth', '1', 'https://github.com/wbthomason/packer.nvim', install_path})\n"
+        "end\n"
+        "vim.cmd [[packadd packer.nvim]]\n"
+        "\n"
+        "require('packer').startup(function(use)\n"
+        "  -- Add your plugins here, e.g.\n"
+        "  -- use 'wbthomason/packer.nvim'\n"
+        "end)";
+}
+
+static const char *other_snippet_commented(void) {
+    return "-- [[ Add your plugin manager bootstrap or manual plugin loading here. ]]";
+}
+
+static const char *other_snippet_active(void) {
+    return "-- Add your plugin manager bootstrap or manual plugin loading here.";
+}
+
+/* ---------- Core functions ---------- */
+static char *get_standard_config_dir(void) {
+#ifdef _WIN32
+    const char *localappdata = getenv("LOCALAPPDATA");
+    if (localappdata) {
+        char *path = malloc(strlen(localappdata) + 10);
+        if (!path) return NULL;
+        sprintf(path, "%s\\nvim", localappdata);
+        return path;
+    }
+    const char *home = getenv("USERPROFILE");
+    if (!home) home = getenv("HOME");
+    if (!home) {
+        fprintf(stderr, "Could not determine home directory.\n");
+        return NULL;
+    }
+    char *path = malloc(strlen(home) + 30);
+    if (!path) return NULL;
+    sprintf(path, "%s\\AppData\\Local\\nvim", home);
+    return path;
+#else
+    const char *home = getenv("HOME");
+    if (!home) {
+        fprintf(stderr, "HOME environment variable not set.\n");
+        return NULL;
+    }
+    char *path = malloc(strlen(home) + 20);
+    if (!path) return NULL;
+    sprintf(path, "%s/.config/nvim", home);
+    return path;
+#endif
+}
+
+static char *get_nvim_executable(void) {
+#ifdef _WIN32
+    return strdup("nvim.exe");
+#else
+    return strdup("nvim");
+#endif
+}
+
+static int run_neovim_with_config(const char *config_dir, const char *nvim_exe) {
+    if (!config_dir || !nvim_exe) return -1;
+
+#ifdef _WIN32
+    char cmd[PATH_MAX + 256];
+    snprintf(cmd, sizeof(cmd), "set XDG_CONFIG_HOME=%s && %s", config_dir, nvim_exe);
+    if (!opts.quiet)
+        fprintf(stderr, "Launching Neovim with XDG_CONFIG_HOME=%s\n", config_dir);
+    return system(cmd);
+#else
+    char *old_xdg = getenv("XDG_CONFIG_HOME");
+    if (setenv("XDG_CONFIG_HOME", config_dir, 1) != 0) {
+        perror("setenv");
+        return -1;
+    }
+    if (!opts.quiet)
+        fprintf(stderr, "Launching Neovim with XDG_CONFIG_HOME=%s\n", config_dir);
+
+    pid_t pid = fork();
+    if (pid == -1) {
+        perror("fork");
+        return -1;
+    } else if (pid == 0) {
+        execlp(nvim_exe, nvim_exe, (char *)NULL);
+        perror("execlp");
+        exit(1);
+    } else {
+        int status;
+        waitpid(pid, &status, 0);
+        if (old_xdg)
+            setenv("XDG_CONFIG_HOME", old_xdg, 1);
+        else
+            unsetenv("XDG_CONFIG_HOME");
+        return WEXITSTATUS(status);
+    }
+#endif
+}
+
+/* ---------- Creazione scheletro (con no-comments) ---------- */
+static int create_skeleton(const char *skeleton_path, const char *pkg_manager,
+                           const char *gen_date, bool no_comments) {
+    char init_path[PATH_MAX];
+    const char *snippet;
+    char init_content[8192];
+    char basic_opts[1024];
+    char user_content[256];
+
+    if (!skeleton_path || !pkg_manager || !gen_date)
+        return -1;
+    if (mkdir_p(skeleton_path, 0755) != 0)
+        return -1;
+
+    if (strcmp(pkg_manager, "lazy") == 0) {
+        snippet = no_comments ? lazy_snippet_active() : lazy_snippet_commented();
+    } else if (strcmp(pkg_manager, "packer") == 0) {
+        snippet = no_comments ? packer_snippet_active() : packer_snippet_commented();
+    } else {
+        snippet = no_comments ? other_snippet_active() : other_snippet_commented();
+    }
+
+    if (no_comments) {
+        strcpy(basic_opts,
+            "vim.opt.number = true\n"
+            "vim.opt.relativenumber = true\n"
+            "vim.opt.tabstop = 4\n"
+            "vim.opt.shiftwidth = 4\n"
+            "vim.opt.expandtab = true\n");
+    } else {
+        strcpy(basic_opts,
+            "-- Uncomment and adjust the options you need:\n"
+            "-- vim.opt.number = true\n"
+            "-- vim.opt.relativenumber = true\n"
+            "-- vim.opt.tabstop = 4\n"
+            "-- vim.opt.shiftwidth = 4\n"
+            "-- vim.opt.expandtab = true\n");
+    }
+
+    snprintf(init_content, sizeof(init_content),
+        "print(\"This configuration was generated by " PROGRAM_NAME " on %s with script version " PROGRAM_VERSION "\")\n"
+        "\n"
+        "%s\n"
+        "\n"
+        "require('user')\n"
+        "\n"
+        "%s\n"
+        "\n"
+        "-- Put the rest of your configuration here\n",
+        gen_date,
+        basic_opts,
+        snippet
+    );
+
+    snprintf(init_path, sizeof(init_path), "%s%cinit.lua", skeleton_path, SEP);
+    if (write_file(init_path, init_content) != 0) return -1;
+
+    char lua_user_path[PATH_MAX];
+    snprintf(lua_user_path, sizeof(lua_user_path), "%s%clua%cuser%cinit.lua",
+             skeleton_path, SEP, SEP, SEP);
+    char *dir = strdup(lua_user_path);
+    char *last_sep = strrchr(dir, SEP);
+    if (last_sep) *last_sep = '\0';
+    if (mkdir_p(dir, 0755) != 0) {
+        free(dir);
+        return -1;
+    }
+    free(dir);
+
+    if (no_comments) {
+        strcpy(user_content,
+            "-- User-specific module\n"
+            "local M = {}\n"
+            "function M.setup()\n"
+            "  -- Add your custom code here\n"
+            "end\n"
+            "return M\n");
+    } else {
+        strcpy(user_content,
+            "-- User-specific module\n"
+            "-- This file can be loaded via require('user') from init.lua\n"
+            "-- Add your own custom Lua code here.\n");
+    }
+    if (write_file(lua_user_path, user_content) != 0) return -1;
+
+    char readme_path[PATH_MAX];
+    snprintf(readme_path, sizeof(readme_path), "%s%cREADME.md", skeleton_path, SEP);
+    char readme[2048];
+    snprintf(readme, sizeof(readme),
+        "# Neovim Configuration Skeleton\n"
+        "\n"
+        "This is a minimal, empty skeleton for Neovim configuration.\n"
+        "\n"
+        "## Structure\n"
+        "- `init.lua` - main entry point (includes a commented bootstrap template for %s)\n"
+        "- `lua/` - Lua modules\n"
+        "  - `user/` - your custom modules\n"
+        "\n"
+        "## Usage\n"
+        "1. Edit `init.lua` to set options and load modules.\n"
+        "2. If you want to use the provided package manager template, uncomment the\n"
+        "   bootstrap block and add your plugins.\n"
+        "3. Place your additional Lua files in `lua/` or its subdirectories.\n"
+        "\n"
+        "This skeleton is ready for you to build your own Neovim setup.\n",
+        pkg_manager
+    );
+    if (write_file(readme_path, readme) != 0) return -1;
+
+    return 0;
+}
+
+/* ---------- Generation logic ---------- */
+typedef struct {
+    bool success;
+    char *result_path;
+    char *error_msg;
+} GenerationResult;
+
+static GenerationResult run_generation(
+    const char *pkg_manager,
+    bool deploy,
+    bool run,
+    const char *output_dir,
+    bool force,
+    bool quiet,
+    bool dry_run,
+    bool no_comments,
+    bool keep
+) {
+    GenerationResult res = { false, NULL, NULL };
+    time_t t = time(NULL);
+    struct tm *tm_info = localtime(&t);
+    char gen_date[32];
+    strftime(gen_date, sizeof(gen_date), "%Y-%m-%d %H:%M:%S", tm_info);
+
+    char temp_template[PATH_MAX];
+#ifdef _WIN32
+    char *temp = getenv("TEMP");
+    if (!temp) temp = ".";
+    snprintf(temp_template, sizeof(temp_template), "%s\\neovim_skeleton_%d", temp, rand());
+    if (_mkdir(temp_template) != 0) {
+        res.error_msg = strdup("Failed to create temporary directory");
+        return res;
+    }
+#else
+    snprintf(temp_template, sizeof(temp_template), "/tmp/neovim_skeleton_XXXXXX");
+    char *temp_dir = mkdtemp(temp_template);
+    if (!temp_dir) {
+        res.error_msg = strdup("mkdtemp failed");
+        return res;
+    }
+#endif
+
+    char skeleton_path[PATH_MAX];
+#ifdef _WIN32
+    snprintf(skeleton_path, sizeof(skeleton_path), "%s\\nvim", temp_template);
+#else
+    snprintf(skeleton_path, sizeof(skeleton_path), "%s/nvim", temp_template);
+#endif
+
+    if (create_skeleton(skeleton_path, pkg_manager, gen_date, no_comments) != 0) {
+        if (!keep) remove_tree(temp_template);
+        else fprintf(stderr, "Temporary directory kept (error): %s\n", temp_template);
+        res.error_msg = strdup("Failed to create skeleton");
+        return res;
+    }
+
+    if (dry_run) {
+        res.success = true;
+        res.result_path = strdup(skeleton_path);
+        if (!keep) remove_tree(temp_template);
+        else fprintf(stderr, "Temporary directory kept (dry-run): %s\n", temp_template);
+        return res;
+    }
+
+    char *final_nvim_dir = NULL;
+    char *parent_for_run = NULL;
+
+    if (deploy) {
+        char *target = get_standard_config_dir();
+        if (!target) {
+            if (!keep) remove_tree(temp_template);
+            else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+            res.error_msg = strdup("Could not determine standard config directory");
+            return res;
+        }
+        if (path_exists(target)) {
+            if (force) {
+                char backup[PATH_MAX];
+                snprintf(backup, sizeof(backup), "%s_backup", target);
+                if (path_exists(backup))
+                    remove_tree(backup);
+                if (rename(target, backup) != 0) {
+                    perror("rename");
+                    free(target);
+                    if (!keep) remove_tree(temp_template);
+                    else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+                    res.error_msg = strdup("Failed to rename existing config");
+                    return res;
+                }
+                if (!quiet)
+                    printf("Existing config moved to: %s\n", backup);
+            } else {
+                if (!quiet)
+                    printf("Target directory %s already exists. Use --force to overwrite.\n", target);
+                free(target);
+                if (!keep) remove_tree(temp_template);
+                else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+                res.error_msg = strdup("Target directory exists and --force not given");
+                return res;
+            }
+        }
+        if (copy_tree(skeleton_path, target) != 0) {
+            free(target);
+            if (!keep) remove_tree(temp_template);
+            else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+            res.error_msg = strdup("Failed to copy skeleton to target");
+            return res;
+        }
+        final_nvim_dir = strdup(target);
+        char *tmp = strdup(target);
+        char *last_sep = strrchr(tmp, '\\');
+        if (!last_sep) last_sep = strrchr(tmp, '/');
+        if (last_sep) *last_sep = '\0';
+        parent_for_run = strdup(tmp);
+        free(tmp);
+        free(target);
+    } else if (output_dir) {
+        char dest[PATH_MAX];
+#ifdef _WIN32
+        snprintf(dest, sizeof(dest), "%s\\nvim", output_dir);
+#else
+        snprintf(dest, sizeof(dest), "%s/nvim", output_dir);
+#endif
+        if (path_exists(dest)) {
+            if (force) {
+                remove_tree(dest);
+            } else {
+                if (!quiet)
+                    printf("Output directory %s already exists. Use --force to overwrite.\n", dest);
+                if (!keep) remove_tree(temp_template);
+                else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+                res.error_msg = strdup("Output directory exists and --force not given");
+                return res;
+            }
+        }
+        if (mkdir_p(output_dir, 0755) != 0) {
+            if (!keep) remove_tree(temp_template);
+            else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+            res.error_msg = strdup("Failed to create output directory");
+            return res;
+        }
+        if (copy_tree(skeleton_path, dest) != 0) {
+            if (!keep) remove_tree(temp_template);
+            else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+            res.error_msg = strdup("Failed to copy skeleton to output");
+            return res;
+        }
+        final_nvim_dir = strdup(dest);
+        parent_for_run = strdup(output_dir);
+    } else {
+        final_nvim_dir = strdup(skeleton_path);
+        parent_for_run = strdup(temp_template);
+    }
+
+    if (run) {
+        char *nvim_exe = get_nvim_executable();
+        if (!nvim_exe) {
+            fprintf(stderr, "Failed to locate Neovim executable.\n");
+            free(final_nvim_dir);
+            free(parent_for_run);
+            if (!keep) remove_tree(temp_template);
+            else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+            res.error_msg = strdup("Neovim executable not found");
+            return res;
+        }
+        if (!quiet)
+            printf("Using Neovim executable: %s\n", nvim_exe);
+        run_neovim_with_config(parent_for_run, nvim_exe);
+        free(nvim_exe);
+    }
+
+    if (run && !(deploy || output_dir)) {
+        if (!keep) remove_tree(temp_template);
+        else fprintf(stderr, "Temporary directory kept (--run): %s\n", temp_template);
+        if (!quiet && !keep)
+            printf("Temporary configuration removed.\n");
+    } else {
+        if (!keep) remove_tree(temp_template);
+        else fprintf(stderr, "Temporary directory kept: %s\n", temp_template);
+    }
+
+    res.success = true;
+    res.result_path = final_nvim_dir;
+    free(parent_for_run);
+
+    return res;
+}
+
+/* ---------- HTTP Server ---------- */
+static void http_send_response(socket_t client, int status_code, const char *status_text, const char *content_type, const char *body) {
+    char response[4096];
+    int len = snprintf(response, sizeof(response),
+        "HTTP/1.1 %d %s\r\n"
+        "Content-Type: %s\r\n"
+        "Content-Length: %zu\r\n"
+        "Connection: close\r\n"
+        "\r\n"
+        "%s",
+        status_code, status_text,
+        content_type,
+        strlen(body),
+        body
+    );
+    send(client, response, len, 0);
+}
+
+static void parse_json_value(const char *json, const char *key, char *value, size_t value_size, bool *bool_val) {
+    char search[64];
+    snprintf(search, sizeof(search), "\"%s\":", key);
+    const char *p = strstr(json, search);
+    if (!p) return;
+    p += strlen(search);
+    while (*p == ' ' || *p == '\t') p++;
+    if (*p == '"') {
+        p++;
+        const char *end = strchr(p, '"');
+        if (end) {
+            size_t len = end - p;
+            if (len < value_size) {
+                strncpy(value, p, len);
+                value[len] = '\0';
+            }
+        }
+    } else if (*p == 't' || *p == 'f') {
+        if (strncmp(p, "true", 4) == 0) {
+            if (bool_val) *bool_val = true;
+        } else if (strncmp(p, "false", 5) == 0) {
+            if (bool_val) *bool_val = false;
+        }
+    }
+}
+
+static void handle_generate_request(socket_t client, const char *body) {
+    char pkg_manager[32] = "lazy";
+    char output_dir[PATH_MAX] = "";
+    bool deploy = false;
+    bool run = false;
+    bool force = false;
+    bool quiet = false;
+    bool dry_run = false;
+    bool no_comments = false;
+    bool keep = false;
+
+    parse_json_value(body, "package_manager", pkg_manager, sizeof(pkg_manager), NULL);
+    parse_json_value(body, "output_dir", output_dir, sizeof(output_dir), NULL);
+    parse_json_value(body, "deploy", NULL, 0, &deploy);
+    parse_json_value(body, "run", NULL, 0, &run);
+    parse_json_value(body, "force", NULL, 0, &force);
+    parse_json_value(body, "quiet", NULL, 0, &quiet);
+    parse_json_value(body, "dry_run", NULL, 0, &dry_run);
+    parse_json_value(body, "no_comments", NULL, 0, &no_comments);
+    parse_json_value(body, "keep", NULL, 0, &keep);
+
+    if (strcmp(pkg_manager, "lazy") != 0 && strcmp(pkg_manager, "packer") != 0 &&
+        strcmp(pkg_manager, "minimal") != 0 && strcmp(pkg_manager, "other") != 0) {
+        strcpy(pkg_manager, "lazy");
+    }
+
+    if (!deploy && !run && output_dir[0] == '\0') {
+        http_send_response(client, 400, "Bad Request", "application/json",
+            "{\"status\":\"error\",\"message\":\"At least one of deploy, run, or output_dir is required\"}");
+        return;
+    }
+
+    GenerationResult res = run_generation(
+        pkg_manager,
+        deploy,
+        run,
+        output_dir[0] ? output_dir : NULL,
+        force,
+        quiet,
+        dry_run,
+        no_comments,
+        keep
+    );
+
+    char json_response[4096];
+    if (res.success) {
+        snprintf(json_response, sizeof(json_response),
+            "{\"status\":\"ok\",\"message\":\"Configuration generated\",\"path\":\"%s\"}",
+            res.result_path ? res.result_path : ""
+        );
+    } else {
+        snprintf(json_response, sizeof(json_response),
+            "{\"status\":\"error\",\"message\":\"%s\"}",
+            res.error_msg ? res.error_msg : "Unknown error"
+        );
+    }
+
+    http_send_response(client, res.success ? 200 : 500,
+                       res.success ? "OK" : "Internal Server Error",
+                       "application/json", json_response);
+
+    free(res.result_path);
+    free(res.error_msg);
+}
+
+static void handle_client(socket_t client) {
+    char buffer[4096] = {0};
+    int recv_len = recv(client, buffer, sizeof(buffer) - 1, 0);
+    if (recv_len <= 0) {
+        close_socket(client);
+        return;
+    }
+    buffer[recv_len] = '\0';
+
+    if (strncmp(buffer, "POST /generate", 14) != 0) {
+        http_send_response(client, 404, "Not Found", "text/plain", "404 Not Found");
+        close_socket(client);
+        return;
+    }
+
+    char *body_start = strstr(buffer, "\r\n\r\n");
+    if (!body_start) {
+        http_send_response(client, 400, "Bad Request", "text/plain", "Malformed request");
+        close_socket(client);
+        return;
+    }
+    body_start += 4;
+
+    handle_generate_request(client, body_start);
+    close_socket(client);
+}
+
+static void start_server(const char *address, int port) {
+#ifdef _WIN32
+    WSADATA wsa;
+    if (WSAStartup(MAKEWORD(2,2), &wsa) != 0) {
+        fprintf(stderr, "WSAStartup failed\n");
+        return;
+    }
+#endif
+
+    socket_t server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_socket == INVALID_SOCKET) {
+        perror("socket");
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return;
+    }
+
+    int opt = 1;
+#ifdef _WIN32
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&opt, sizeof(opt));
+#else
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+#endif
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    if (inet_pton(AF_INET, address, &addr.sin_addr) <= 0) {
+        perror("inet_pton");
+        close_socket(server_socket);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return;
+    }
+
+    if (bind(server_socket, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
+        perror("bind");
+        close_socket(server_socket);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return;
+    }
+
+    if (listen(server_socket, 5) == SOCKET_ERROR) {
+        perror("listen");
+        close_socket(server_socket);
+#ifdef _WIN32
+        WSACleanup();
+#endif
+        return;
+    }
+
+    fprintf(stderr, "Listening on %s:%d\n", address, port);
+
+    while (1) {
+        socket_t client = accept(server_socket, NULL, NULL);
+        if (client == INVALID_SOCKET) {
+            perror("accept");
+            continue;
+        }
+        handle_client(client);
+    }
+
+    close_socket(server_socket);
+#ifdef _WIN32
+    WSACleanup();
+#endif
+}
+
+/* ---------- Help and main ---------- */
+static void print_help(const char *progname) {
+    printf(
+        "Usage: %s [OPTIONS]\n"
+        "Generate a Neovim configuration skeleton with a package manager template.\n"
+        "\n"
+        "CLI options:\n"
+        "  -p, --package-manager {lazy,packer,minimal,other}  (default: lazy)\n"
+        "  -d, --deploy          deploy to standard config dir\n"
+        "  -o, --output DIR      copy skeleton to DIR/nvim\n"
+        "  -r, --run             launch Neovim after generation\n"
+        "  -f, --force           overwrite existing directory without confirmation\n"
+        "  -q, --quiet           suppress non‑error output\n"
+        "  -D, --dry-run         show actions without writing\n"
+        "  -N, --no-comments     generate files without comments (active code)\n"
+        "  -K, --keep            keep temporary directory (do not delete)\n"
+        "  -v, --version         show version\n"
+        "  -h, --help            this help\n"
+        "\n"
+        "Server (listen) options:\n"
+        "  --listen              start in server mode (HTTP)\n"
+        "  --listen-address IP   address to bind (default: 127.0.0.1)\n"
+        "  --listen-port PORT    port to bind (default: 8080)\n"
+        "\n"
+        "At least one of --deploy, --output, or --run is required in CLI mode.\n"
+        "In server mode, POST /generate with JSON body containing fields:\n"
+        "  package_manager, deploy, run, output_dir, force, quiet, dry_run, no_comments, keep\n",
+        progname
+    );
+}
+
+int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        char *arg = argv[i];
+
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
+            print_help(argv[0]);
+            return 0;
+        }
+        if (strcmp(arg, "-v") == 0 || strcmp(arg, "--version") == 0) {
+            printf("%s %s (%s)\n", PROGRAM_NAME, PROGRAM_VERSION, ITERATION_LEVEL);
+            return 0;
+        }
+        if (strcmp(arg, "-d") == 0 || strcmp(arg, "--deploy") == 0) {
+            opts.deploy = true;
+            continue;
+        }
+        if (strcmp(arg, "-r") == 0 || strcmp(arg, "--run") == 0) {
+            opts.run = true;
+            continue;
+        }
+        if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
+            opts.force = true;
+            continue;
+        }
+        if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
+            opts.quiet = true;
+            continue;
+        }
+        if (strcmp(arg, "-D") == 0 || strcmp(arg, "--dry-run") == 0) {
+            opts.dry_run = true;
+            continue;
+        }
+        if (strcmp(arg, "-N") == 0 || strcmp(arg, "--no-comments") == 0) {
+            opts.no_comments = true;
+            continue;
+        }
+        if (strcmp(arg, "-K") == 0 || strcmp(arg, "--keep") == 0) {
+            opts.keep = true;
+            continue;
+        }
+        if (strcmp(arg, "-p") == 0 || strcmp(arg, "--package-manager") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: option %s requires an argument.\n", arg);
+                return 1;
+            }
+            i++;
+            char *val = argv[i];
+            if (strcmp(val, "lazy") != 0 && strcmp(val, "packer") != 0 &&
+                strcmp(val, "minimal") != 0 && strcmp(val, "other") != 0) {
+                fprintf(stderr, "Invalid package manager: %s\n", val);
+                return 1;
+            }
+            opts.pkg_manager = val;
+            continue;
+        }
+        if (strcmp(arg, "-o") == 0 || strcmp(arg, "--output") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: option %s requires an argument.\n", arg);
+                return 1;
+            }
+            i++;
+            opts.output_dir = argv[i];
+            continue;
+        }
+        if (strcmp(arg, "--listen") == 0) {
+            opts.listen = true;
+            continue;
+        }
+        if (strcmp(arg, "--listen-address") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: option %s requires an argument.\n", arg);
+                return 1;
+            }
+            i++;
+            opts.listen_address = argv[i];
+            continue;
+        }
+        if (strcmp(arg, "--listen-port") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "Error: option %s requires an argument.\n", arg);
+                return 1;
+            }
+            i++;
+            char *endptr;
+            long port = strtol(argv[i], &endptr, 10);
+            if (*endptr != '\0' || port <= 0 || port > 65535) {
+                fprintf(stderr, "Invalid port: %s\n", argv[i]);
+                return 1;
+            }
+            opts.listen_port = (int)port;
+            continue;
+        }
+        fprintf(stderr, "Unknown option: %s\n", arg);
+        return 1;
+    }
+
+    if (opts.listen) {
+        if (!opts.listen_address)
+            opts.listen_address = DEFAULT_LISTEN_ADDRESS;
+        start_server(opts.listen_address, opts.listen_port);
+        return 0;
+    }
+
+    if (!(opts.deploy || opts.output_dir || opts.run)) {
+        fprintf(stderr, "Error: at least one of --deploy, --output, or --run is required.\n");
+        return 1;
+    }
+
+    GenerationResult res = run_generation(
+        opts.pkg_manager,
+        opts.deploy,
+        opts.run,
+        opts.output_dir,
+        opts.force,
+        opts.quiet,
+        opts.dry_run,
+        opts.no_comments,
+        opts.keep
+    );
+
+    if (!res.success) {
+        fprintf(stderr, "Error: %s\n", res.error_msg ? res.error_msg : "Unknown error");
+        free(res.error_msg);
+        free(res.result_path);
+        return 1;
+    }
+
+    free(res.result_path);
+    free(res.error_msg);
+    return 0;
+}
