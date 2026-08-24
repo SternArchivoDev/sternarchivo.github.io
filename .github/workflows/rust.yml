@@ -2,7 +2,18 @@ name: Rust
 
 on:
   push:
-    tags: [ "v*" ]           # Solo quando pushi un tag che inizia con "v"
+    tags: [ "v*" ]
+  workflow_dispatch:
+    inputs:
+      tag_version:
+        description: 'Versione (es. 1.2.3)'
+        required: true
+        type: string
+      create_release:
+        description: 'Crea release?'
+        required: false
+        default: true
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -11,59 +22,89 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
 
-    - name: Build
+    - name: Build (debug)
       run: cargo build --verbose
 
     - name: Run tests
       run: cargo test --verbose
 
-    - name: Extract package version
+    - name: Extract package metadata
       id: meta
       run: |
-        version=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
+        metadata=$(cargo metadata --format-version=1 --no-deps)
+        name=$(echo "$metadata" | jq -r '.packages[0].name')
+        version=$(echo "$metadata" | jq -r '.packages[0].version')
+        bin_name=$(echo "$metadata" | jq -r '.packages[0].targets[] | select(.kind[] == "bin") | .name' | head -n1)
+        if [ -z "$bin_name" ]; then
+          bin_name="$name"
+        fi
+        echo "name=$name" >> $GITHUB_OUTPUT
         echo "version=$version" >> $GITHUB_OUTPUT
+        echo "bin_name=$bin_name" >> $GITHUB_OUTPUT
       shell: bash
 
     - name: Check tag matches version
+      if: |
+        (startsWith(github.ref, 'refs/tags/') && github.event_name == 'push') ||
+        (github.event_name == 'workflow_dispatch')
       run: |
-        TAG="${{ github.ref_name }}"
-        # Rimuovo il prefisso "v" dal tag (es. v1.2.3 → 1.2.3)
-        TAG_VERSION="${TAG#v}"
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+          TAG_VERSION="${{ inputs.tag_version }}"
+        else
+          TAG="${{ github.ref_name }}"
+          TAG_VERSION="${TAG#v}"
+        fi
         PACKAGE_VERSION="${{ steps.meta.outputs.version }}"
-        
-        echo "Tag Git: $TAG"
-        echo "Versione dal tag: $TAG_VERSION"
+        echo "Versione specificata: $TAG_VERSION"
         echo "Versione da Cargo.toml: $PACKAGE_VERSION"
-        
         if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
-          echo "❌ ERRORE: Il tag '$TAG' non corrisponde a Cargo.toml ('$PACKAGE_VERSION')"
+          echo "❌ ERRORE: La versione '$TAG_VERSION' non corrisponde a Cargo.toml ('$PACKAGE_VERSION')"
           exit 1
         else
-          echo "✅ Tag e versione corrispondono!"
+          echo "✅ Versione corrisponde!"
         fi
       shell: bash
 
     - name: Build release binary
       run: cargo build --release
 
-    - name: Create distribution package
+    - name: Create distribution package (Linux)
+      if: runner.os == 'Linux'
       run: |
         mkdir -p dist
-        # Prende il nome del package da Cargo.toml
-        name=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name')
-        # Copia l'eseguibile con il nome del package (senza versione)
-        cp target/release/$name dist/$name
-        # Crea l'archivio con nome "package.name-package.version.tar.gz"
-        tar -czf $name-${{ steps.meta.outputs.version }}.tar.gz -C dist $name
-      shell: bash
+        cp target/release/${{ steps.meta.outputs.bin_name }} dist/${{ steps.meta.outputs.name }}
+        tar -czf ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz -C dist ${{ steps.meta.outputs.name }}
+
+    - name: Create distribution package (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir dist
+        copy target\release\${{ steps.meta.outputs.bin_name }}.exe dist\${{ steps.meta.outputs.name }}.exe
+        powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip"
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}-${{ runner.os }}
+        path: |
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
+        if-no-files-found: error
 
     - name: Create GitHub Release
+      if: |
+        (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') &&
+        runner.os == 'Linux' &&
+        inputs.create_release != false
       uses: softprops/action-gh-release@v2
       with:
         name: Release ${{ steps.meta.outputs.version }}
@@ -71,7 +112,13 @@ jobs:
           ## Release ${{ steps.meta.outputs.version }}
         draft: false
         prerelease: false
+        tag_name: ${{ 
+          github.event_name == 'workflow_dispatch' && 
+          format('v{0}', inputs.tag_version) 
+          || github.ref_name 
+        }}
         files: |
-          *.tar.gz
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
