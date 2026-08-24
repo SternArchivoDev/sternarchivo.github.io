@@ -3,6 +3,7 @@ name: Rust
 on:
   push:
     branches: [ "master" ]
+    tags: [ "v*" ]
   pull_request:
     branches: [ "master" ]
 
@@ -40,6 +41,27 @@ jobs:
         echo "bin_name=$bin_name" >> $GITHUB_OUTPUT
       shell: bash
 
+    # --- CONTROLLO OBBLIGATORIO: il tag DEVE corrispondere alla versione ---
+    - name: Check tag matches version
+      if: startsWith(github.ref, 'refs/tags/')
+      run: |
+        TAG="${{ github.ref_name }}"
+        # Rimuovo il prefisso "v" se presente (es. v1.2.3 → 1.2.3)
+        TAG_VERSION="${TAG#v}"
+        PACKAGE_VERSION="${{ steps.meta.outputs.version }}"
+        
+        echo "Tag Git: $TAG"
+        echo "Versione da tag (senza v): $TAG_VERSION"
+        echo "Versione da Cargo.toml: $PACKAGE_VERSION"
+        
+        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+          echo "❌ ERRORE: Il tag '$TAG' non corrisponde alla versione in Cargo.toml ('$PACKAGE_VERSION')"
+          exit 1
+        else
+          echo "✅ Tag e versione corrispondono!"
+        fi
+      shell: bash
+
     - name: Build release binary
       run: cargo build --release
 
@@ -59,15 +81,30 @@ jobs:
         copy target\release\${{ steps.meta.outputs.bin_name }}.exe dist\${{ steps.meta.outputs.name }}.exe
         powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip"
 
-    # --- Upload artifact (con nome univoco per OS) ---
+    # --- Upload artifact su GitHub Actions (sempre) ---
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        # Nome dell'artifact su GitHub: includiamo l'OS per evitare conflitti
         name: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}-${{ runner.os }}
-        # Il file da caricare cambia estensione in base all'OS
         path: |
           ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
           ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
-        # Con 'if-no-files-found: error' si blocca se il file non esiste (utile per debugging)
         if-no-files-found: error
+
+    # --- Crea Release su GitHub SOLO se siamo su Linux (il controllo è già passato) ---
+    - name: Create GitHub Release
+      if: startsWith(github.ref, 'refs/tags/') && runner.os == 'Linux'
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Release ${{ steps.meta.outputs.version }}
+        body: |
+          ## Release ${{ steps.meta.outputs.version }}
+          - Eseguibili per Linux e Windows.
+          - Pacchetti allegati.
+        draft: false
+        prerelease: false
+        files: |
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
