@@ -1,16 +1,12 @@
 name: Rust
 
 on:
-  # Trigger automatici
   push:
     branches: [ "master" ]
     tags: [ "v*" ]
   pull_request:
     branches: [ "master" ]
-  
-  # Trigger manuale dalla GUI di GitHub
   workflow_dispatch:
-    # Parametri opzionali che l'utente può impostare dalla UI
     inputs:
       tag_version:
         description: 'Versione del tag (es. 1.2.3) - lascia vuoto per usare Cargo.toml'
@@ -56,26 +52,23 @@ jobs:
         echo "bin_name=$bin_name" >> $GITHUB_OUTPUT
       shell: bash
 
-    # --- CONTROLLO OBBLIGATORIO: il tag DEVE corrispondere alla versione ---
+    # --- CONTROLLO OBBLIGATORIO (solo per tag o manuale con tag_version) ---
     - name: Check tag matches version
-      if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+      if: |
+        (startsWith(github.ref, 'refs/tags/') && github.event_name == 'push') ||
+        (github.event_name == 'workflow_dispatch' && inputs.tag_version != '')
       run: |
-        # Se eseguito manualmente, usa il parametro tag_version (se fornito)
-        if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ inputs.tag_version }}" ]; then
+        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
           TAG_VERSION="${{ inputs.tag_version }}"
           echo "🔹 Usando versione manuale: $TAG_VERSION"
         else
-          # Altrimenti estrae dal tag Git
           TAG="${{ github.ref_name }}"
           TAG_VERSION="${TAG#v}"
           echo "🔹 Usando versione dal tag: $TAG_VERSION"
         fi
-        
         PACKAGE_VERSION="${{ steps.meta.outputs.version }}"
-        
         echo "Versione specificata: $TAG_VERSION"
         echo "Versione da Cargo.toml: $PACKAGE_VERSION"
-        
         if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
           echo "❌ ERRORE: La versione '$TAG_VERSION' non corrisponde a Cargo.toml ('$PACKAGE_VERSION')"
           exit 1
@@ -113,7 +106,7 @@ jobs:
           ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
         if-no-files-found: error
 
-    # --- Crea Release su GitHub (solo su Linux) ---
+    # --- Crea Release su GitHub (solo su Linux e se è tag o manuale con create_release=true) ---
     - name: Create GitHub Release
       if: |
         (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') &&
