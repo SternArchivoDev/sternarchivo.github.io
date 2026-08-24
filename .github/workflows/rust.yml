@@ -11,8 +11,10 @@ env:
 
 jobs:
   build:
-
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
@@ -36,21 +38,36 @@ jobs:
         echo "name=$name" >> $GITHUB_OUTPUT
         echo "version=$version" >> $GITHUB_OUTPUT
         echo "bin_name=$bin_name" >> $GITHUB_OUTPUT
+      shell: bash
 
     - name: Build release binary
       run: cargo build --release
 
-    - name: Create distribution package
+    # --- Creazione pacchetto per Linux ---
+    - name: Create distribution package (Linux)
+      if: runner.os == 'Linux'
       run: |
         mkdir -p dist
-        # Copia l'eseguibile rinominandolo con il solo nome del package
         cp target/release/${{ steps.meta.outputs.bin_name }} dist/${{ steps.meta.outputs.name }}
-        # Crea un archivio con nome "package.name-package.version.tar.gz"
         tar -czf ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz -C dist ${{ steps.meta.outputs.name }}
 
+    # --- Creazione pacchetto per Windows ---
+    - name: Create distribution package (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        mkdir dist
+        copy target\release\${{ steps.meta.outputs.bin_name }}.exe dist\${{ steps.meta.outputs.name }}.exe
+        powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip"
+
+    # --- Upload artifact (con nome univoco per OS) ---
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        # Il nome dell'artifact è "package.name-package.version"
-        name: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}
-        path: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
+        # Nome dell'artifact su GitHub: includiamo l'OS per evitare conflitti
+        name: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}-${{ runner.os }}
+        # Il file da caricare cambia estensione in base all'OS
+        path: |
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
+          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
+        # Con 'if-no-files-found: error' si blocca se il file non esiste (utile per debugging)
+        if-no-files-found: error
