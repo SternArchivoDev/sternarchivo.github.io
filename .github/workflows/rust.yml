@@ -2,21 +2,76 @@ name: Rust
 
 on:
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+    tags: [ "v*" ]           # Solo quando pushi un tag che inizia con "v"
 
 env:
   CARGO_TERM_COLOR: always
 
-jobs:
-  build:
+permissions:
+  contents: write
 
+jobs:
+  release:
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v4
+
     - name: Build
       run: cargo build --verbose
+
     - name: Run tests
       run: cargo test --verbose
+
+    - name: Extract package version
+      id: meta
+      run: |
+        version=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
+        echo "version=$version" >> $GITHUB_OUTPUT
+      shell: bash
+
+    - name: Check tag matches version
+      run: |
+        TAG="${{ github.ref_name }}"
+        # Rimuovo il prefisso "v" dal tag (es. v1.2.3 → 1.2.3)
+        TAG_VERSION="${TAG#v}"
+        PACKAGE_VERSION="${{ steps.meta.outputs.version }}"
+        
+        echo "Tag Git: $TAG"
+        echo "Versione dal tag: $TAG_VERSION"
+        echo "Versione da Cargo.toml: $PACKAGE_VERSION"
+        
+        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
+          echo "❌ ERRORE: Il tag '$TAG' non corrisponde a Cargo.toml ('$PACKAGE_VERSION')"
+          exit 1
+        else
+          echo "✅ Tag e versione corrispondono!"
+        fi
+      shell: bash
+
+    - name: Build release binary
+      run: cargo build --release
+
+    - name: Create distribution package
+      run: |
+        mkdir -p dist
+        # Prende il nome del package da Cargo.toml
+        name=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name')
+        # Copia l'eseguibile con il nome del package (senza versione)
+        cp target/release/$name dist/$name
+        # Crea l'archivio con nome "package.name-package.version.tar.gz"
+        tar -czf $name-${{ steps.meta.outputs.version }}.tar.gz -C dist $name
+      shell: bash
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        name: Release ${{ steps.meta.outputs.version }}
+        body: |
+          ## Release ${{ steps.meta.outputs.version }}
+        draft: false
+        prerelease: false
+        files: |
+          *.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
