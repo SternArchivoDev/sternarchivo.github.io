@@ -1,19 +1,9 @@
-name: Rust
+name: Release
 
 on:
   push:
-    tags: [ "v*" ]
-  workflow_dispatch:
-    inputs:
-      tag_version:
-        description: 'Versione (es. 1.2.3)'
-        required: true
-        type: string
-      create_release:
-        description: 'Crea release?'
-        required: false
-        default: true
-        type: boolean
+    tags:
+      - 'v*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -22,103 +12,51 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  release:
+    runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Build (debug)
-      run: cargo build --verbose
+      - name: Install jq (Windows)
+        run: choco install jq -y
 
-    - name: Run tests
-      run: cargo test --verbose
+      - name: Build
+        run: cargo build --verbose
 
-    - name: Extract package metadata
-      id: meta
-      run: |
-        metadata=$(cargo metadata --format-version=1 --no-deps)
-        name=$(echo "$metadata" | jq -r '.packages[0].name')
-        version=$(echo "$metadata" | jq -r '.packages[0].version')
-        bin_name=$(echo "$metadata" | jq -r '.packages[0].targets[] | select(.kind[] == "bin") | .name' | head -n1)
-        if [ -z "$bin_name" ]; then
-          bin_name="$name"
-        fi
-        echo "name=$name" >> $GITHUB_OUTPUT
-        echo "version=$version" >> $GITHUB_OUTPUT
-        echo "bin_name=$bin_name" >> $GITHUB_OUTPUT
-      shell: bash
+      - name: Run tests
+        run: cargo test --verbose
 
-    - name: Check tag matches version
-      if: |
-        (startsWith(github.ref, 'refs/tags/') && github.event_name == 'push') ||
-        (github.event_name == 'workflow_dispatch')
-      run: |
-        if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-          TAG_VERSION="${{ inputs.tag_version }}"
-        else
-          TAG="${{ github.ref_name }}"
-          TAG_VERSION="${TAG#v}"
-        fi
-        PACKAGE_VERSION="${{ steps.meta.outputs.version }}"
-        echo "Versione specificata: $TAG_VERSION"
-        echo "Versione da Cargo.toml: $PACKAGE_VERSION"
-        if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
-          echo "❌ ERRORE: La versione '$TAG_VERSION' non corrisponde a Cargo.toml ('$PACKAGE_VERSION')"
-          exit 1
-        else
-          echo "✅ Versione corrisponde!"
-        fi
-      shell: bash
+      - name: Get version from Cargo.toml
+        id: cargo
+        shell: bash
+        run: |
+          VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].version')
+          NAME=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[0].name')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "name=$NAME" >> $GITHUB_OUTPUT
 
-    - name: Build release binary
-      run: cargo build --release
+      - name: Check tag matches version
+        shell: bash
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "${{ steps.cargo.outputs.version }}" ]; then
+            echo "❌ Tag v$TAG != Cargo.toml ${{ steps.cargo.outputs.version }}"
+            exit 1
+          fi
+          echo "✅ Tag matches version"
 
-    - name: Create distribution package (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        mkdir -p dist
-        cp target/release/${{ steps.meta.outputs.bin_name }} dist/${{ steps.meta.outputs.name }}
-        tar -czf ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz -C dist ${{ steps.meta.outputs.name }}
+      - name: Build release binary
+        run: cargo build --release
 
-    - name: Create distribution package (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        mkdir dist
-        copy target\release\${{ steps.meta.outputs.bin_name }}.exe dist\${{ steps.meta.outputs.name }}.exe
-        powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip"
+      - name: Package (Windows)
+        run: |
+          mkdir dist
+          copy target\release\${{ steps.cargo.outputs.name }}.exe dist\${{ steps.cargo.outputs.name }}.exe
+          powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ steps.cargo.outputs.name }}-${{ steps.cargo.outputs.version }}.zip"
 
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}-${{ runner.os }}
-        path: |
-          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
-          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
-        if-no-files-found: error
-
-    - name: Create GitHub Release
-      if: |
-        (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') &&
-        runner.os == 'Linux' &&
-        inputs.create_release != false
-      uses: softprops/action-gh-release@v2
-      with:
-        name: Release ${{ steps.meta.outputs.version }}
-        body: |
-          ## Release ${{ steps.meta.outputs.version }}
-        draft: false
-        prerelease: false
-        tag_name: ${{ 
-          github.event_name == 'workflow_dispatch' && 
-          format('v{0}', inputs.tag_version) 
-          || github.ref_name 
-        }}
-        files: |
-          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.tar.gz
-          ${{ steps.meta.outputs.name }}-${{ steps.meta.outputs.version }}.zip
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.cargo.outputs.version }}
+          files: ${{ steps.cargo.outputs.name }}-${{ steps.cargo.outputs.version }}.zip
