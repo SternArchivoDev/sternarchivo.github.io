@@ -1,14 +1,14 @@
-# Neovim Config Generator — Core Engine
+# StitchVim — Core Engine
 
 > A high‑performance, modular core written in Rust designed to programmatically generate, deploy, and manage Neovim configurations.
 
-[![Build and Release](https://github.com/TheCGuy73/neovim-config-generator/actions/workflows/build-and-release.yml/badge.svg)](https://github.com/TheCGuy73/neovim-config-generator/actions/workflows/build-and-release.yml)
+[![Build and Release](https://github.com/TheCGuy73/StitchVim/actions/workflows/build-and-release.yml/badge.svg)](https://github.com/TheCGuy73/StitchVim/actions/workflows/build-and-release.yml)
 
 ## 📖 About
 
-**Neovim Config Generator** is a Rust‑based tool that programmatically generates, deploys, and manages Neovim configurations. Instead of manually writing and maintaining complex `init.lua` or `init.vim` files, this engine allows you to define your configuration in a structured, code‑driven way and output a ready‑to‑use Neovim config.
+**StitchVim** is a Rust‑based tool that programmatically generates, deploys, and manages Neovim configurations. Instead of manually writing and maintaining complex `init.lua` or `init.[...]
 
-The project is built with Rust for performance and reliability, providing a solid foundation for configuration generation. It features a modular architecture with dedicated components for configuration management, generation logic, and server integration.
+The project is built with Rust for performance and reliability, providing a solid foundation for configuration generation. It features a modular architecture with dedicated components for configuratio[...]
 
 ## ✨ Features
 
