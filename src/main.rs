@@ -7,7 +7,7 @@ use stvim::{
     config::{
         PackageManager, DEFAULT_LISTEN_ADDRESS, DEFAULT_LISTEN_PORT, PROGRAM_NAME, PROGRAM_VERSION,
     },
-    run_editor, run_generation, run_server,
+    run_generation, run_server,
 };
 
 #[derive(Parser)]
@@ -62,24 +62,13 @@ enum Commands {
         #[command(subcommand)]
         action: ServerAction,
     },
-    /// Launch the built-in text editor
-    Edit {
-        /// File to open (optional)
-        file: Option<PathBuf>,
-        /// Overwrite existing file without confirmation
-        #[arg(short, long)]
-        force: bool,
-        /// Suppress output messages
-        #[arg(short, long)]
-        quiet: bool,
-    },
+    // Il comando Edit è stato rimosso
 }
 
 #[derive(Subcommand)]
 enum ServerAction {
     /// Start the server on all interfaces with a random port
     Start {
-        /// Bind address (default: 0.0.0.0)
         #[arg(short, long, default_value = "0.0.0.0")]
         address: String,
     },
@@ -91,28 +80,10 @@ enum ServerAction {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Se non viene specificato alcun comando o azione, mostra l'help
-    if cli.command.is_none()
-        && !cli.deploy
-        && cli.output.is_none()
-        && !cli.run
-        && !cli.dry_run
-        && !cli.quiet
-        && !cli.force
-        && !cli.keep
-        && !cli.no_comments
-    {
-        let _ = Cli::command().print_help();
-        println!();
-        return Ok(());
-    }
-
     match cli.command {
         Some(Commands::Listen { address, port }) => {
             let bound = run_server(&address, port).await?;
             println!("✅ Server started at: {}", bound);
-            // Il server rimane in esecuzione (run_server non blocca perché spawna un task)
-            // Attendiamo che il server termini (in realtà non termina mai finché non si interrompe il programma)
             tokio::signal::ctrl_c().await?;
             eprintln!("Server stopped.");
             Ok(())
@@ -130,16 +101,19 @@ async fn main() -> anyhow::Result<()> {
                 Ok(())
             }
         },
-        Some(Commands::Edit { file, .. }) => {
-            run_editor(file.as_deref())?;
-            Ok(())
-        }
         None => {
-            if !cli.deploy && cli.output.is_none() && !cli.run {
-                eprintln!(
-                    "Error: at least one of --deploy, --output, or --run is required.\nTry --help."
-                );
-                std::process::exit(1);
+            // Se non è stato specificato alcun comando, determiniamo l'azione
+            let archive_mode = !cli.deploy && cli.output.is_none() && !cli.run;
+
+            // Se non ci sono flag di azione e non è dry-run, generiamo un archivio
+            // (dry-run non crea l'archivio, ma mostra solo il percorso temporaneo)
+            let do_archive = archive_mode && !cli.dry_run;
+
+            if !cli.deploy && cli.output.is_none() && !cli.run && !do_archive && !cli.dry_run {
+                // Se non viene richiesta nessuna azione, mostriamo l'help
+                let _ = Cli::command().print_help();
+                println!();
+                return Ok(());
             }
 
             let result = run_generation(
@@ -152,6 +126,7 @@ async fn main() -> anyhow::Result<()> {
                 cli.dry_run,
                 cli.no_comments,
                 cli.keep,
+                do_archive, // nuovo parametro
             );
 
             if !result.success {
@@ -166,7 +141,11 @@ async fn main() -> anyhow::Result<()> {
 
             if !cli.dry_run && !cli.quiet {
                 if let Some(path) = result.result_path {
-                    println!("✅ Configuration generated at: {}", path.display());
+                    if do_archive {
+                        println!("✅ Archive created at: {}", path.display());
+                    } else {
+                        println!("✅ Configuration generated at: {}", path.display());
+                    }
                 }
             }
             Ok(())
