@@ -1,5 +1,5 @@
 [package]
-name = "neovim_config_generator"
+name = "StitchVim"
 version = "0.0.0-alpha1"
 edition = "2021"
 
