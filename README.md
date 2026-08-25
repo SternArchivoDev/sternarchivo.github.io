@@ -19,6 +19,7 @@ The project is built with Rust for performance and reliability, providing a soli
 - 🔄 **CI/CD Ready** – Automated builds and releases via GitHub Actions
 - 🌐 **HTTP Daemon** – Exposes a REST API for remote configuration generation
 - 📦 **Multiple Package Managers** – Supports lazy.nvim, packer.nvim, minimal, and custom setups
+- 📝 **Kibi Editor** – `stvim edit [file]` launches the integrated Kibi terminal editor
 
 ## 🏗️ Core Architecture
 
@@ -42,6 +43,9 @@ Built with [`hyper`](https://crates.io/crates/hyper) and [`tokio`](https://crate
 
 ### `config.rs` & `types.rs` – Data & Constants
 Defines shared domain models, package manager variants (`lazy`, `packer`, `minimal`, `other`), code snippets, and serialization structures.
+
+### `edit.rs` – Integrated Editor
+The `edit` subcommand delegates terminal editing to the local Amp backend. Amp uses `termion` on Linux and a platform-native `crossterm` backend on Windows.
 
 ## ⚙️ Execution Flow
 

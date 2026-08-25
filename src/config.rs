@@ -4,13 +4,11 @@ use clap::ValueEnum;
 use serde::Deserialize;
 use std::path::PathBuf;
 
-// ---------- COSTANTI ----------
 pub const PROGRAM_NAME: &str = env!("CARGO_PKG_NAME");
 pub const PROGRAM_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_LISTEN_ADDRESS: &str = "127.0.0.1";
 pub const DEFAULT_LISTEN_PORT: u16 = 8080;
 
-// ---------- ENUM PACKAGE MANAGER ----------
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PackageManager {
@@ -33,7 +31,7 @@ impl std::fmt::Display for PackageManager {
     }
 }
 
-// ---------- SNIPPETS ----------
+// Snippets per i gestori di pacchetti (commentati o attivi)
 pub const LAZY_COMMENTED: &str = r#"-- [[ Bootstrap Lazy.nvim ]]
 -- local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"
 -- if not vim.loop.fs_stat(lazypath) then
@@ -90,10 +88,11 @@ require('packer').startup(function(use)
   -- use 'wbthomason/packer.nvim'
 end)"#;
 
-pub const OTHER_COMMENTED: &str = "-- [[ Add your plugin manager bootstrap or manual plugin loading here. ]]";
-pub const OTHER_ACTIVE: &str = "-- Add your plugin manager bootstrap or manual plugin loading here.";
+pub const OTHER_COMMENTED: &str =
+    "-- [[ Add your plugin manager bootstrap or manual plugin loading here. ]]";
+pub const OTHER_ACTIVE: &str =
+    "-- Add your plugin manager bootstrap or manual plugin loading here.";
 
-// ---------- FUNZIONI UTILI ----------
 pub fn get_snippet(pkg: PackageManager, no_comments: bool) -> &'static str {
     match (pkg, no_comments) {
         (PackageManager::Lazy, true) => LAZY_ACTIVE,

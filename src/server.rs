@@ -11,7 +11,6 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::net::TcpListener;
 
-// ---------- BODY PERSONALIZZATO ----------
 struct ResponseBody {
     data: Option<Bytes>,
 }
@@ -28,7 +27,6 @@ impl Body for ResponseBody {
     }
 }
 
-// ---------- HELPER PER RISPOSTE JSON ----------
 fn json_response<T: serde::Serialize>(status: StatusCode, body: &T) -> Response<ResponseBody> {
     let json = serde_json::to_string(body).unwrap_or_else(|_| "{}".to_string());
     Response::builder()
@@ -40,7 +38,6 @@ fn json_response<T: serde::Serialize>(status: StatusCode, body: &T) -> Response<
         .unwrap()
 }
 
-// ---------- HANDLER PER /generate ----------
 async fn handle_generate(req: Request<hyper::body::Incoming>) -> Result<Response<ResponseBody>> {
     let mut body = req.into_body();
     let mut body_bytes = Vec::new();
@@ -75,10 +72,7 @@ async fn handle_generate(req: Request<hyper::body::Incoming>) -> Result<Response
         return Ok(json_response(StatusCode::BAD_REQUEST, &resp));
     }
 
-    let output_dir_path = req_json
-        .output_dir
-        .as_deref()
-        .map(std::path::PathBuf::from);
+    let output_dir_path = req_json.output_dir.as_deref().map(std::path::PathBuf::from);
     let output_dir = output_dir_path.as_deref();
 
     let result = run_generation(
@@ -107,7 +101,9 @@ async fn handle_generate(req: Request<hyper::body::Incoming>) -> Result<Response
             StatusCode::INTERNAL_SERVER_ERROR,
             GenerateResponseJson {
                 status: "error".to_string(),
-                message: result.error_msg.unwrap_or_else(|| "Unknown error".to_string()),
+                message: result
+                    .error_msg
+                    .unwrap_or_else(|| "Unknown error".to_string()),
                 path: None,
             },
         )
@@ -116,44 +112,49 @@ async fn handle_generate(req: Request<hyper::body::Incoming>) -> Result<Response
     Ok(json_response(status, &resp))
 }
 
-// ---------- AVVIO DEL SERVER ----------
-pub async fn run_server(address: &str, port: u16) -> Result<()> {
+pub async fn run_server(address: &str, port: u16) -> Result<std::net::SocketAddr> {
     let addr: std::net::SocketAddr = format!("{}:{}", address, port).parse()?;
-    eprintln!("✅ Server listening on {}:{}", address, port);
     let listener = TcpListener::bind(addr).await?;
+    let bound_addr = listener.local_addr()?;
+    eprintln!("✅ Server listening on {}", bound_addr);
 
-    loop {
-        let (stream, _) = listener.accept().await?;
-        tokio::spawn(async move {
-            let service = hyper::service::service_fn(|req: Request<hyper::body::Incoming>| async {
-                if req.method() == hyper::Method::POST && req.uri().path() == "/generate" {
-                    match handle_generate(req).await {
-                        Ok(resp) => Ok::<_, hyper::Error>(resp),
-                        Err(e) => {
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let service =
+                    hyper::service::service_fn(|req: Request<hyper::body::Incoming>| async {
+                        if req.method() == hyper::Method::POST && req.uri().path() == "/generate" {
+                            match handle_generate(req).await {
+                                Ok(resp) => Ok::<_, hyper::Error>(resp),
+                                Err(e) => {
+                                    let err_resp = GenerateResponseJson {
+                                        status: "error".to_string(),
+                                        message: format!("Internal error: {}", e),
+                                        path: None,
+                                    };
+                                    Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, &err_resp))
+                                }
+                            }
+                        } else {
                             let err_resp = GenerateResponseJson {
                                 status: "error".to_string(),
-                                message: format!("Internal error: {}", e),
+                                message: "Not Found".to_string(),
                                 path: None,
                             };
-                            Ok(json_response(StatusCode::INTERNAL_SERVER_ERROR, &err_resp))
+                            Ok(json_response(StatusCode::NOT_FOUND, &err_resp))
                         }
-                    }
-                } else {
-                    let err_resp = GenerateResponseJson {
-                        status: "error".to_string(),
-                        message: "Not Found".to_string(),
-                        path: None,
-                    };
-                    Ok(json_response(StatusCode::NOT_FOUND, &err_resp))
+                    });
+
+                if let Err(e) = hyper::server::conn::http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await
+                {
+                    eprintln!("HTTP connection error: {}", e);
                 }
             });
+        }
+    });
 
-            if let Err(e) = hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .await
-            {
-                eprintln!("HTTP connection error: {}", e);
-            }
-        });
-    }
+    Ok(bound_addr)
 }

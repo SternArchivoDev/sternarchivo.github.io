@@ -1,16 +1,15 @@
 //! StitchVim – v0.0.0-alpha2
 //! Punto di ingresso – CLI e avvio server
 
-use clap::{Parser, Subcommand, CommandFactory};
+use clap::{CommandFactory, Parser, Subcommand};
 use std::path::PathBuf;
-
 use stvim::{
-    config::{DEFAULT_LISTEN_ADDRESS, DEFAULT_LISTEN_PORT, PROGRAM_NAME, PROGRAM_VERSION, PackageManager},
-    run_generation, run_server,
-    run_editor,
+    config::{
+        PackageManager, DEFAULT_LISTEN_ADDRESS, DEFAULT_LISTEN_PORT, PROGRAM_NAME, PROGRAM_VERSION,
+    },
+    run_editor, run_generation, run_server,
 };
 
-// ---------- CLI ARGS ----------
 #[derive(Parser)]
 #[command(
     name = PROGRAM_NAME,
@@ -51,12 +50,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Start HTTP server
+    /// Start HTTP server with manual address and port
     Listen {
         #[arg(long, default_value = DEFAULT_LISTEN_ADDRESS)]
         address: String,
         #[arg(long, default_value_t = DEFAULT_LISTEN_PORT)]
         port: u16,
+    },
+    /// Manage the HTTP server (start/stop)
+    Server {
+        #[command(subcommand)]
+        action: ServerAction,
     },
     /// Launch the built-in text editor
     Edit {
@@ -71,7 +75,18 @@ enum Commands {
     },
 }
 
-// ---------- MAIN ----------
+#[derive(Subcommand)]
+enum ServerAction {
+    /// Start the server on all interfaces with a random port
+    Start {
+        /// Bind address (default: 0.0.0.0)
+        #[arg(short, long, default_value = "0.0.0.0")]
+        address: String,
+    },
+    /// Stop the server (not implemented yet)
+    Stop,
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -94,11 +109,30 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Some(Commands::Listen { address, port }) => {
-            run_server(&address, port).await?;
+            let bound = run_server(&address, port).await?;
+            println!("✅ Server started at: {}", bound);
+            // Il server rimane in esecuzione (run_server non blocca perché spawna un task)
+            // Attendiamo che il server termini (in realtà non termina mai finché non si interrompe il programma)
+            tokio::signal::ctrl_c().await?;
+            eprintln!("Server stopped.");
+            Ok(())
         }
-        Some(Commands::Edit { file, force, quiet }) => {
-            // L'editor è sincrono, non serve tokio
-            run_editor(file.as_deref(), force, quiet)?;
+        Some(Commands::Server { action }) => match action {
+            ServerAction::Start { address } => {
+                let bound = run_server(&address, 0).await?;
+                println!("✅ Server started at: {}", bound);
+                tokio::signal::ctrl_c().await?;
+                eprintln!("Server stopped.");
+                Ok(())
+            }
+            ServerAction::Stop => {
+                eprintln!("Stop command not implemented yet.");
+                Ok(())
+            }
+        },
+        Some(Commands::Edit { file, .. }) => {
+            run_editor(file.as_deref())?;
+            Ok(())
         }
         None => {
             if !cli.deploy && cli.output.is_none() && !cli.run {
@@ -123,7 +157,9 @@ async fn main() -> anyhow::Result<()> {
             if !result.success {
                 eprintln!(
                     "Error: {}",
-                    result.error_msg.unwrap_or_else(|| "Unknown error".to_string())
+                    result
+                        .error_msg
+                        .unwrap_or_else(|| "Unknown error".to_string())
                 );
                 std::process::exit(1);
             }
@@ -133,8 +169,7 @@ async fn main() -> anyhow::Result<()> {
                     println!("✅ Configuration generated at: {}", path.display());
                 }
             }
+            Ok(())
         }
     }
-
-    Ok(())
 }

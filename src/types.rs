@@ -4,14 +4,12 @@ use crate::config::PackageManager;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-// ---------- RISULTATO GENERAZIONE ----------
 pub struct GenerationResult {
     pub success: bool,
     pub result_path: Option<PathBuf>,
     pub error_msg: Option<String>,
 }
 
-// ---------- RICHIESTA JSON PER IL SERVER ----------
 #[derive(Debug, Deserialize)]
 pub struct GenerateRequestJson {
     #[serde(default)]
@@ -34,7 +32,6 @@ pub struct GenerateRequestJson {
     pub keep: bool,
 }
 
-// ---------- RISPOSTA JSON PER IL SERVER ----------
 #[derive(Debug, Serialize)]
 pub struct GenerateResponseJson {
     pub status: String,
