@@ -51,16 +51,17 @@ jobs:
         run: cargo build --release
 
       - name: Package (Windows)
+        shell: pwsh
         run: |
           mkdir dist
-          copy target\release\${{ steps.cargo.outputs.name }}.exe dist\${{ steps.cargo.outputs.name }}.exe
-          if exist templates\USER.md (
-            copy templates\USER.md dist\USER.md
+          copy "target/release/${{ steps.cargo.outputs.name }}.exe" "dist/${{ steps.cargo.outputs.name }}.exe"
+          if (Test-Path "templates/USER.md") {
+            copy "templates/USER.md" "dist/USER.md"
             echo "✅ USER.md included"
-          ) else (
+          } else {
             echo "⚠️ USER.md not found in templates/, skipping"
-          )
-          powershell -Command "Compress-Archive -Path dist\* -DestinationPath ${{ steps.cargo.outputs.name }}-${{ steps.cargo.outputs.version }}.zip"
+          }
+          Compress-Archive -Path "dist/*" -DestinationPath "${{ steps.cargo.outputs.name }}-${{ steps.cargo.outputs.version }}.zip"
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
