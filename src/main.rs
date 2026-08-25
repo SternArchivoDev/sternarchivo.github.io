@@ -1,10 +1,14 @@
-//! Neovim Configuration Generator – v0.1.0 (Rust)
+//! StitchVim – v0.0.0-alpha2
 //! Punto di ingresso – CLI e avvio server
 
 use clap::{Parser, Subcommand, CommandFactory};
 use std::path::PathBuf;
 
-use neovim_config_generator::{config::{DEFAULT_LISTEN_ADDRESS, DEFAULT_LISTEN_PORT, PROGRAM_NAME, PROGRAM_VERSION, PackageManager}, run_generation, run_server};
+use stvim::{
+    config::{DEFAULT_LISTEN_ADDRESS, DEFAULT_LISTEN_PORT, PROGRAM_NAME, PROGRAM_VERSION, PackageManager},
+    run_generation, run_server,
+    run_editor,
+};
 
 // ---------- CLI ARGS ----------
 #[derive(Parser)]
@@ -54,6 +58,17 @@ enum Commands {
         #[arg(long, default_value_t = DEFAULT_LISTEN_PORT)]
         port: u16,
     },
+    /// Launch the built-in text editor
+    Edit {
+        /// File to open (optional)
+        file: Option<PathBuf>,
+        /// Overwrite existing file without confirmation
+        #[arg(short, long)]
+        force: bool,
+        /// Suppress output messages
+        #[arg(short, long)]
+        quiet: bool,
+    },
 }
 
 // ---------- MAIN ----------
@@ -80,6 +95,10 @@ async fn main() -> anyhow::Result<()> {
     match cli.command {
         Some(Commands::Listen { address, port }) => {
             run_server(&address, port).await?;
+        }
+        Some(Commands::Edit { file, force, quiet }) => {
+            // L'editor è sincrono, non serve tokio
+            run_editor(file.as_deref(), force, quiet)?;
         }
         None => {
             if !cli.deploy && cli.output.is_none() && !cli.run {
