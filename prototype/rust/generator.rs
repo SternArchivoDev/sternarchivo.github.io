@@ -8,8 +8,11 @@ use crate::types::GenerationResult;
 use anyhow::Result;
 use chrono::Local;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use zip::write::FileOptions;
+use zip::ZipWriter;
 
 fn create_skeleton(
     dest: &Path,
@@ -125,6 +128,45 @@ fn run_neovim(config_dir: &Path, quiet: bool) -> Result<()> {
     Ok(())
 }
 
+fn create_archive(src_dir: &Path, dest_dir: &Path, base_name: &str) -> Result<PathBuf> {
+    fs::create_dir_all(dest_dir)?;
+    let timestamp = Local::now().format("%Y%m%d_%H%M%S").to_string();
+    let archive_name = format!("{}_{}.zip", base_name, timestamp);
+    let archive_path = dest_dir.join(archive_name);
+
+    let file = fs::File::create(&archive_path)?;
+    let mut zip = ZipWriter::new(file);
+    let options = FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+    fn add_dir_contents(
+        zip: &mut ZipWriter<fs::File>,
+        dir: &Path,
+        base: &Path,
+        options: &FileOptions,
+    ) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let relative_path = path.strip_prefix(base).unwrap();
+            let relative_path = relative_path.to_str().unwrap();
+
+            if path.is_dir() {
+                zip.add_directory(relative_path, *options)?;
+                add_dir_contents(zip, &path, base, options)?;
+            } else {
+                zip.start_file(relative_path, *options)?;
+                let content = fs::read(&path)?;
+                zip.write(&content)?;
+            }
+        }
+        Ok(())
+    }
+
+    add_dir_contents(&mut zip, src_dir, src_dir, &options)?;
+    zip.finish()?;
+    Ok(archive_path)
+}
+
 pub fn run_generation(
     pkg: PackageManager,
     deploy: bool,
@@ -135,6 +177,7 @@ pub fn run_generation(
     dry_run: bool,
     no_comments: bool,
     keep: bool,
+    archive: bool, // decimo parametro
 ) -> GenerationResult {
     let mut res = GenerationResult {
         success: false,
@@ -176,6 +219,35 @@ pub fn run_generation(
             );
         }
         return res;
+    }
+
+    if archive {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let archive_dir = exe_dir.join("generated_configs");
+        match create_archive(&skeleton_path, &archive_dir, "nvim_config") {
+            Ok(path) => {
+                res.success = true;
+                res.result_path = Some(path);
+                if !keep {
+                    let _ = remove_tree(&temp_path);
+                } else {
+                    eprintln!("Temporary directory kept: {}", temp_path.display());
+                }
+                return res;
+            }
+            Err(e) => {
+                res.error_msg = Some(format!("Failed to create archive: {}", e));
+                if !keep {
+                    let _ = remove_tree(&temp_path);
+                } else {
+                    eprintln!("Temporary directory kept: {}", temp_path.display());
+                }
+                return res;
+            }
+        }
     }
 
     let final_nvim_dir: PathBuf;
