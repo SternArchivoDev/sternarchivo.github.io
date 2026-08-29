@@ -1,6 +1,6 @@
 {
   "RepoName": "StitchVim",
-  "version": "0.0.0-alpha6",
+  "version": "0.0.0-alpha9",
   "snippets": {
     "lazy": {
       "commented": "-- [[ Bootstrap Lazy.nvim ]]\n-- local lazypath = vim.fn.stdpath(\"data\") .. \"/lazy/lazy.nvim\"\n-- if not vim.loop.fs_stat(lazypath) then\n--   vim.fn.system({\n--     \"git\", \"clone\", \"--filter=blob:none\",\n--     \"https://github.com/folke/lazy.nvim.git\",\n--     \"--branch=stable\", lazypath\n--   })\n-- end\n-- vim.opt.rtp:prepend(lazypath)\n--\n-- require(\"lazy\").setup({\n--   { import = \"plugins\" },\n-- })",
@@ -50,7 +50,7 @@
     },
     {
       "path": "lua/plugins/example.lua",
-      "template": "-- Example plugin configuration\n-- Add your plugins in this folder. Each file should return a table\n-- that will be passed to Lazy.nvim.\n--\n-- return {\n--   \"catppuccin/nvim\",\n--   name = \"catppuccin\",\n--   opts = {\n--     flavour = \"mocha\", -- latte, frappe, macchiato, mocha\n--   },\n-- }\n"
+      "template": "-- Example plugin configuration\n-- Add your plugins here.\n-- Each file in this folder should return a table that will be passed to Lazy.nvim.\n--\n-- Example:\n-- return {\n--   \"catppuccin/nvim\",\n--   name = \"catppuccin\",\n--   opts = {\n--     flavour = \"mocha\", -- latte, frappe, macchiato, mocha\n--   },\n-- }\n\nreturn {}\n"
     },
     {
       "path": "README.md",

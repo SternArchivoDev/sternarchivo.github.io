@@ -1,7 +1,6 @@
 /**
  * StitchVim – Neovim Config Generator
- * Modular JavaScript, data-driven from vectorialData.json
- * Tutti i file sono nella stessa directory, il caricamento è robusto.
+ * Modular JavaScript con custom select animato
  */
 (function () {
     'use strict';
@@ -10,27 +9,87 @@
     // DOM References
     // ============================================================
     const DOM = {
-        pkgSelect: document.getElementById('pkgManager'),
+        customSelect: document.getElementById('pkgManager'),
+        selectTrigger: document.querySelector('.select-trigger'),
+        selectValue: document.querySelector('.select-value'),
+        selectOptions: document.querySelector('.select-options'),
+        selectHidden: document.getElementById('pkgManagerHidden'),
         chkNoComments: document.getElementById('chkNoComments'),
         chkArchive: document.getElementById('chkArchive'),
+        chkLazyVimExtra: document.getElementById('chkLazyVimExtra'),
         generateBtn: document.getElementById('generateBtn'),
         downloadBtn: document.getElementById('downloadZipBtn'),
+        resetBtn: document.getElementById('resetBtn'),
         fileList: document.getElementById('fileList'),
         fileContent: document.getElementById('fileContent'),
         statusMsg: document.getElementById('statusMessage'),
         versionBadge: document.getElementById('versionBadge'),
+        previewContainer: document.getElementById('previewContainer'),
     };
 
     // ============================================================
     // State
     // ============================================================
     const state = {
-        config: null,          // dati da vectorialData.json
-        files: null,           // { path: content, ... }
+        config: null,
+        files: null,
         selectedPath: null,
         isLoading: false,
         configLoaded: false,
+        pkgValue: 'lazy',
+        flashTimeout: null,
     };
+
+    // ============================================================
+    // Custom Select Logic
+    // ============================================================
+    function initCustomSelect() {
+        const { customSelect, selectTrigger, selectOptions, selectValue, selectHidden } = DOM;
+
+        selectTrigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = customSelect.classList.contains('open');
+            if (isOpen) closeSelect();
+            else openSelect();
+        });
+
+        selectOptions.addEventListener('click', (e) => {
+            const option = e.target.closest('.select-option');
+            if (!option) return;
+            const value = option.dataset.value;
+            const label = option.textContent.trim();
+            selectValue.textContent = label;
+            selectHidden.value = value;
+            state.pkgValue = value;
+
+            selectOptions.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+            option.classList.add('selected');
+
+            closeSelect();
+
+            if (state.configLoaded) {
+                generateConfig();
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!customSelect.contains(e.target)) closeSelect();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeSelect();
+        });
+
+        function openSelect() {
+            customSelect.classList.add('open');
+            selectTrigger.classList.add('active');
+        }
+
+        function closeSelect() {
+            customSelect.classList.remove('open');
+            selectTrigger.classList.remove('active');
+        }
+    }
 
     // ============================================================
     // UI Helpers
@@ -51,12 +110,38 @@
         DOM.generateBtn.disabled = loading;
         DOM.generateBtn.innerHTML = loading
             ? '<span class="spinner"></span> Generazione...'
-            : '🚀 Genera';
+            : '<span>🚀 Genera</span>';
     }
 
     function setButtonsEnabled(enabled) {
+        const hasFiles = state.files && Object.keys(state.files).length > 0;
         DOM.generateBtn.disabled = !enabled || !state.configLoaded;
-        DOM.downloadBtn.disabled = !enabled || !state.files || !state.configLoaded;
+        DOM.downloadBtn.disabled = !enabled || !hasFiles || !state.configLoaded;
+        DOM.resetBtn.disabled = !enabled || !hasFiles || !state.configLoaded;
+    }
+
+    // ============================================================
+    // Reset Logic
+    // ============================================================
+    function resetGenerator() {
+        if (state.flashTimeout) {
+            clearTimeout(state.flashTimeout);
+            state.flashTimeout = null;
+        }
+        DOM.previewContainer.classList.remove('flash');
+
+        state.files = null;
+        state.selectedPath = null;
+
+        DOM.fileList.innerHTML = `<div class="empty-state">Nessun file generato</div>`;
+        DOM.fileContent.innerHTML = `<div class="empty-state">Seleziona un file dalla lista</div>`;
+
+        DOM.downloadBtn.disabled = true;
+        DOM.resetBtn.disabled = true;
+
+        hideStatus();
+        showStatus('🔄 Stato resettato.', 'info');
+        setTimeout(hideStatus, 2000);
     }
 
     // ============================================================
@@ -69,13 +154,12 @@
     }
 
     // ============================================================
-    // Load Configuration (con fallback)
+    // Load Configuration
     // ============================================================
     async function loadConfig() {
         setButtonsEnabled(false);
         showStatus('⏳ Caricamento configurazione...', 'info');
 
-        // Tentativi di URL: prima assoluto, poi relativo
         const urls = [
             `/vectorialData.json?t=${Date.now()}`,
             `vectorialData.json?t=${Date.now()}`,
@@ -109,7 +193,6 @@
             return;
         }
 
-        // Validazione
         if (!data.snippets || !data.fileTemplates) {
             showStatus('❌ Struttura JSON non valida: mancano "snippets" o "fileTemplates".', 'danger');
             DOM.versionBadge.textContent = 'v?';
@@ -121,7 +204,6 @@
         state.configLoaded = true;
         console.log('✅ Configurazione caricata:', data);
 
-        // Aggiorna badge versione
         if (DOM.versionBadge && data.version) {
             DOM.versionBadge.textContent = `v${data.version}`;
         }
@@ -145,14 +227,25 @@
         hideStatus();
 
         try {
-            const pkg = DOM.pkgSelect.value;
+            const pkg = state.pkgValue;
             const noComments = DOM.chkNoComments.checked;
-            const genDate = new Date().toISOString().replace('T', ' ').slice(0, 19);
+            const lazyVimExtra = DOM.chkLazyVimExtra.checked;
+
+            const genDate = new Intl.DateTimeFormat('it-IT', {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: false,
+                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            }).format(new Date()).replace(/\//g, '-');
+
             const pkgName = pkg.charAt(0).toUpperCase() + pkg.slice(1);
 
             const snippetKey = noComments ? 'active' : 'commented';
 
-            // Estrai i contenuti dal JSON
             const snippet = state.config.snippets[pkg]?.[snippetKey] || state.config.snippets.other[snippetKey];
             const options = state.config.optionsContent?.[snippetKey] || '';
             const keymaps = state.config.keymapsContent?.[snippetKey] || '';
@@ -160,8 +253,6 @@
 
             const version = state.config.version || '0.0.0';
 
-            // --- IL MESSAGGIO DI BENVENUTO USA VIM.NOTIFY IN ENTRAMBI I CASI ---
-            // Se NoComments è attivo, la riga è attiva; altrimenti è commentata.
             const welcome = noComments
                 ? `vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`
                 : `-- vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`;
@@ -178,10 +269,48 @@
                 welcome,
             };
 
-            // Genera i file
             const files = {};
+
+            // --- Template per nvim-notify (solo se LazyVim Extra è attivo e pkg === 'lazy') ---
+            const notifyTemplate = `-- nvim-notify: fancy notifications for Neovim
+-- https://github.com/rcarriga/nvim-notify
+
+return {
+    "rcarriga/nvim-notify",
+    opts = {
+        -- top_down = false,      -- notifiche dal basso verso l'alto
+        -- timeout = 3000,        -- durata in ms
+        -- render = "default",    -- "default", "compact", "minimal"
+        -- stages = "fade",       -- "fade", "slide", "static"
+    },
+    config = function(_, opts)
+        local notify = require("notify")
+        notify.setup(opts)
+        vim.notify = notify
+    end,
+}
+`;
+
             for (const tmpl of state.config.fileTemplates) {
+                // Salta i file plugins se non è lazy
+                if (pkg !== 'lazy' && tmpl.path.startsWith('lua/plugins/')) {
+                    continue;
+                }
+
+                // Se è il file example.lua e LazyVim Extra è attivo, lo sostituiamo con notify
+                if (lazyVimExtra && pkg === 'lazy' && tmpl.path === 'lua/plugins/example.lua') {
+                    // Lo saltiamo, perché generiamo notify.lua al suo posto
+                    continue;
+                }
+
                 files[tmpl.path] = renderTemplate(tmpl.template, context);
+            }
+
+            // Se LazyVim Extra è attivo e pkg === 'lazy', aggiungiamo notify.lua
+            if (lazyVimExtra && pkg === 'lazy') {
+                // Se non ci sono file nella cartella plugins, assicuriamoci che esista almeno notify.lua
+                // (ma se example.lua è stato saltato, va bene)
+                files['lua/plugins/notify.lua'] = notifyTemplate;
             }
 
             state.files = files;
@@ -190,6 +319,20 @@
 
             showStatus(`✅ Generati ${Object.keys(files).length} file`, 'success');
             DOM.downloadBtn.disabled = false;
+            DOM.resetBtn.disabled = false;
+
+            // --- LAMPEGGIO DEL BORDO ---
+            if (state.flashTimeout) {
+                clearTimeout(state.flashTimeout);
+                state.flashTimeout = null;
+            }
+            DOM.previewContainer.classList.remove('flash');
+            void DOM.previewContainer.offsetWidth;
+            DOM.previewContainer.classList.add('flash');
+            state.flashTimeout = setTimeout(() => {
+                DOM.previewContainer.classList.remove('flash');
+                state.flashTimeout = null;
+            }, 5000);
 
         } catch (error) {
             console.error('❌ Errore generazione:', error);
@@ -224,7 +367,6 @@
 
         DOM.fileList.innerHTML = html;
 
-        // Event listeners per i file
         DOM.fileList.querySelectorAll('.file-item').forEach((el) => {
             el.addEventListener('click', () => {
                 const path = el.dataset.path;
@@ -255,7 +397,6 @@
 
         state.selectedPath = path;
 
-        // Aggiorna classe attiva
         DOM.fileList.querySelectorAll('.file-item').forEach((el) => {
             el.classList.toggle('active', el.dataset.path === path);
         });
@@ -263,7 +404,6 @@
         const content = state.files[path];
         const ext = path.split('.').pop();
 
-        // Meta info
         const meta = `
             <div class="file-meta">
                 <span>📁 ${path}</span>
@@ -271,12 +411,9 @@
             </div>
         `;
 
-        // Syntax highlighting basic per Lua
         const highlighted = highlightCode(content, ext);
-
         DOM.fileContent.innerHTML = meta + `<pre>${highlighted}</pre>`;
 
-        // Fade effect
         DOM.fileContent.style.opacity = '0';
         requestAnimationFrame(() => {
             DOM.fileContent.style.transition = 'opacity 0.15s ease';
@@ -299,14 +436,11 @@
         ];
 
         let html = escapeHtml(content);
-
-        // Applica i pattern in ordine
         for (const pattern of patterns) {
             html = html.replace(pattern.regex, (match) => {
                 return `<span class="${pattern.css}">${match}</span>`;
             });
         }
-
         return html;
     }
 
@@ -365,13 +499,13 @@
     // ============================================================
     DOM.generateBtn.addEventListener('click', generateConfig);
     DOM.downloadBtn.addEventListener('click', downloadZip);
-
-    // Rigenera quando cambia il package manager o checkbox
-    DOM.pkgSelect.addEventListener('change', generateConfig);
+    DOM.resetBtn.addEventListener('click', resetGenerator);
     DOM.chkNoComments.addEventListener('change', generateConfig);
+    DOM.chkLazyVimExtra.addEventListener('change', generateConfig);
 
     // ============================================================
     // Init
     // ============================================================
+    initCustomSelect();
     loadConfig();
 })();
