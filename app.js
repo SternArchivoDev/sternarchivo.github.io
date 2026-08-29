@@ -9,14 +9,22 @@
     // DOM References
     // ============================================================
     const DOM = {
-        customSelect: document.getElementById('pkgManager'),
-        selectTrigger: document.querySelector('.select-trigger'),
-        selectValue: document.querySelector('.select-value'),
-        selectOptions: document.querySelector('.select-options'),
-        selectHidden: document.getElementById('pkgManagerHidden'),
+        customSelectLang: document.getElementById('langSelect'),
+        selectTriggerLang: document.querySelector('#langSelect .select-trigger'),
+        selectValueLang: document.querySelector('#langSelect .select-value'),
+        selectOptionsLang: document.querySelector('#langSelect .select-options'),
+        selectHiddenLang: document.getElementById('langHidden'),
+
+        customSelectPkg: document.getElementById('pkgManager'),
+        selectTriggerPkg: document.querySelector('#pkgManager .select-trigger'),
+        selectValuePkg: document.querySelector('#pkgManager .select-value'),
+        selectOptionsPkg: document.querySelector('#pkgManager .select-options'),
+        selectHiddenPkg: document.getElementById('pkgManagerHidden'),
+
         chkNoComments: document.getElementById('chkNoComments'),
         chkArchive: document.getElementById('chkArchive'),
         chkLazyVimExtra: document.getElementById('chkLazyVimExtra'),
+        lazyVimExtraLabel: document.getElementById('lazyVimExtraLabel'),
         generateBtn: document.getElementById('generateBtn'),
         downloadBtn: document.getElementById('downloadZipBtn'),
         resetBtn: document.getElementById('resetBtn'),
@@ -37,43 +45,45 @@
         isLoading: false,
         configLoaded: false,
         pkgValue: 'lazy',
+        langValue: 'lua',
         flashTimeout: null,
     };
 
     // ============================================================
-    // Custom Select Logic
+    // Custom Select Logic (generica)
     // ============================================================
-    function initCustomSelect() {
-        const { customSelect, selectTrigger, selectOptions, selectValue, selectHidden } = DOM;
+    function initCustomSelect(container, hiddenInput, onSelect) {
+        const trigger = container.querySelector('.select-trigger');
+        const options = container.querySelector('.select-options');
+        const valueSpan = container.querySelector('.select-value');
 
-        selectTrigger.addEventListener('click', (e) => {
+        trigger.addEventListener('click', (e) => {
             e.stopPropagation();
-            const isOpen = customSelect.classList.contains('open');
+            const isOpen = container.classList.contains('open');
             if (isOpen) closeSelect();
             else openSelect();
         });
 
-        selectOptions.addEventListener('click', (e) => {
+        options.addEventListener('click', (e) => {
             const option = e.target.closest('.select-option');
             if (!option) return;
             const value = option.dataset.value;
             const label = option.textContent.trim();
-            selectValue.textContent = label;
-            selectHidden.value = value;
-            state.pkgValue = value;
+            valueSpan.textContent = label;
+            hiddenInput.value = value;
 
-            selectOptions.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+            options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
             option.classList.add('selected');
 
             closeSelect();
 
-            if (state.configLoaded) {
-                generateConfig();
+            if (typeof onSelect === 'function') {
+                onSelect(value);
             }
         });
 
         document.addEventListener('click', (e) => {
-            if (!customSelect.contains(e.target)) closeSelect();
+            if (!container.contains(e.target)) closeSelect();
         });
 
         document.addEventListener('keydown', (e) => {
@@ -81,14 +91,35 @@
         });
 
         function openSelect() {
-            customSelect.classList.add('open');
-            selectTrigger.classList.add('active');
+            container.classList.add('open');
+            trigger.classList.add('active');
         }
 
         function closeSelect() {
-            customSelect.classList.remove('open');
-            selectTrigger.classList.remove('active');
+            container.classList.remove('open');
+            trigger.classList.remove('active');
         }
+
+        return {
+            setValue: function(value, label) {
+                const option = options.querySelector(`.select-option[data-value="${value}"]`);
+                if (option) {
+                    valueSpan.textContent = label || option.textContent.trim();
+                    hiddenInput.value = value;
+                    options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+                    option.classList.add('selected');
+                }
+            },
+            disable: function(disabled) {
+                if (disabled) {
+                    container.style.opacity = '0.5';
+                    trigger.style.pointerEvents = 'none';
+                } else {
+                    container.style.opacity = '1';
+                    trigger.style.pointerEvents = '';
+                }
+            }
+        };
     }
 
     // ============================================================
@@ -115,8 +146,9 @@
 
     function setButtonsEnabled(enabled) {
         const hasFiles = state.files && Object.keys(state.files).length > 0;
+        const zipEnabled = DOM.chkArchive.checked && hasFiles && state.configLoaded;
         DOM.generateBtn.disabled = !enabled || !state.configLoaded;
-        DOM.downloadBtn.disabled = !enabled || !hasFiles || !state.configLoaded;
+        DOM.downloadBtn.disabled = !enabled || !zipEnabled;
         DOM.resetBtn.disabled = !enabled || !hasFiles || !state.configLoaded;
     }
 
@@ -227,6 +259,7 @@
         hideStatus();
 
         try {
+            const lang = state.langValue; // 'lua' o 'vim9'
             const pkg = state.pkgValue;
             const noComments = DOM.chkNoComments.checked;
             const lazyVimExtra = DOM.chkLazyVimExtra.checked;
@@ -244,18 +277,26 @@
 
             const pkgName = pkg.charAt(0).toUpperCase() + pkg.slice(1);
 
+            const langSnippets = state.config.snippets[lang] || state.config.snippets.lua;
             const snippetKey = noComments ? 'active' : 'commented';
+            const snippet = langSnippets[pkg]?.[snippetKey] || langSnippets.other[snippetKey] || '';
 
-            const snippet = state.config.snippets[pkg]?.[snippetKey] || state.config.snippets.other[snippetKey];
-            const options = state.config.optionsContent?.[snippetKey] || '';
-            const keymaps = state.config.keymapsContent?.[snippetKey] || '';
-            const autocmds = state.config.autocmdsContent?.[snippetKey] || '';
+            const options = state.config.optionsContent?.[lang]?.[snippetKey] || '';
+            const keymaps = state.config.keymapsContent?.[lang]?.[snippetKey] || '';
+            const autocmds = state.config.autocmdsContent?.[lang]?.[snippetKey] || '';
 
             const version = state.config.version || '0.0.0';
 
-            const welcome = noComments
-                ? `vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`
-                : `-- vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`;
+            let welcome = noComments ? '' : '';
+            if (lang === 'lua') {
+                welcome = noComments
+                    ? `vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`
+                    : `-- vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`;
+            } else {
+                welcome = noComments
+                    ? `echom "Neovim configuration loaded (StitchVim ${version})"`
+                    : `\" echom "Neovim configuration loaded (StitchVim ${version})"`;
+            }
 
             const context = {
                 snippet,
@@ -270,8 +311,8 @@
             };
 
             const files = {};
+            const templates = state.config.fileTemplates[lang] || state.config.fileTemplates.lua;
 
-            // --- Template per nvim-notify (solo se LazyVim Extra è attivo e pkg === 'lazy') ---
             const notifyTemplate = `-- nvim-notify: fancy notifications for Neovim
 -- https://github.com/rcarriga/nvim-notify
 
@@ -291,25 +332,17 @@ return {
 }
 `;
 
-            for (const tmpl of state.config.fileTemplates) {
-                // Salta i file plugins se non è lazy
-                if (pkg !== 'lazy' && tmpl.path.startsWith('lua/plugins/')) {
+            for (const tmpl of templates) {
+                if (lang === 'lua' && pkg !== 'lazy' && tmpl.path.startsWith('lua/plugins/')) {
                     continue;
                 }
-
-                // Se è il file example.lua e LazyVim Extra è attivo, lo sostituiamo con notify
-                if (lazyVimExtra && pkg === 'lazy' && tmpl.path === 'lua/plugins/example.lua') {
-                    // Lo saltiamo, perché generiamo notify.lua al suo posto
+                if (lang === 'lua' && lazyVimExtra && pkg === 'lazy' && tmpl.path === 'lua/plugins/example.lua') {
                     continue;
                 }
-
                 files[tmpl.path] = renderTemplate(tmpl.template, context);
             }
 
-            // Se LazyVim Extra è attivo e pkg === 'lazy', aggiungiamo notify.lua
-            if (lazyVimExtra && pkg === 'lazy') {
-                // Se non ci sono file nella cartella plugins, assicuriamoci che esista almeno notify.lua
-                // (ma se example.lua è stato saltato, va bene)
+            if (lang === 'lua' && lazyVimExtra && pkg === 'lazy') {
                 files['lua/plugins/notify.lua'] = notifyTemplate;
             }
 
@@ -318,10 +351,8 @@ return {
             selectFirstFile(files);
 
             showStatus(`✅ Generati ${Object.keys(files).length} file`, 'success');
-            DOM.downloadBtn.disabled = false;
-            DOM.resetBtn.disabled = false;
+            setButtonsEnabled(true);
 
-            // --- LAMPEGGIO DEL BORDO ---
             if (state.flashTimeout) {
                 clearTimeout(state.flashTimeout);
                 state.flashTimeout = null;
@@ -422,11 +453,18 @@ return {
     }
 
     // ============================================================
-    // Basic Syntax Highlighting (Lua)
+    // Syntax Highlighting
     // ============================================================
     function highlightCode(content, ext) {
-        if (ext !== 'lua') return escapeHtml(content);
+        if (ext === 'lua') {
+            return highlightLua(content);
+        } else if (ext === 'vim') {
+            return highlightVim(content);
+        }
+        return escapeHtml(content);
+    }
 
+    function highlightLua(content) {
         const patterns = [
             { regex: /(--\[\[[\s\S]*?\]\]|--.*)/g, css: 'comment' },
             { regex: /(['"])(?:(?!\1).)*?\1/g, css: 'string' },
@@ -434,7 +472,22 @@ return {
             { regex: /\b([A-Za-z_]\w*)\s*(?=\()/g, css: 'function' },
             { regex: /\b(\d+\.?\d*)\b/g, css: 'number' },
         ];
+        let html = escapeHtml(content);
+        for (const pattern of patterns) {
+            html = html.replace(pattern.regex, (match) => {
+                return `<span class="${pattern.css}">${match}</span>`;
+            });
+        }
+        return html;
+    }
 
+    function highlightVim(content) {
+        const patterns = [
+            { regex: /^(\s*)"[^\n]*/gm, css: 'comment' },
+            { regex: /(['"])(?:(?!\1).)*?\1/g, css: 'string' },
+            { regex: /\b(if|then|else|elseif|endif|function|endfunction|return|for|while|do|break|set|let|unlet|source|runtime|autocmd|augroup|endaugroup|nnoremap|vnoremap|inoremap|command|echom|echo|call)\b/g, css: 'keyword' },
+            { regex: /\b(\d+\.?\d*)\b/g, css: 'number' },
+        ];
         let html = escapeHtml(content);
         for (const pattern of patterns) {
             html = html.replace(pattern.regex, (match) => {
@@ -454,6 +507,11 @@ return {
     // Download ZIP
     // ============================================================
     async function downloadZip() {
+        if (!DOM.chkArchive.checked) {
+            showStatus('⚠️ Abilita "Generate ZIP" per scaricare il pacchetto.', 'warning');
+            return;
+        }
+
         if (!state.files || Object.keys(state.files).length === 0) {
             showStatus('Nessun file da impacchettare.', 'warning');
             return;
@@ -490,8 +548,8 @@ return {
             showStatus(`❌ Errore creazione ZIP: ${error.message}`, 'danger');
         }
 
-        DOM.downloadBtn.disabled = false;
         DOM.downloadBtn.innerHTML = '📦 Scarica ZIP';
+        setButtonsEnabled(true);
     }
 
     // ============================================================
@@ -503,9 +561,75 @@ return {
     DOM.chkNoComments.addEventListener('change', generateConfig);
     DOM.chkLazyVimExtra.addEventListener('change', generateConfig);
 
+    DOM.chkArchive.addEventListener('change', () => {
+        setButtonsEnabled(true);
+    });
+
     // ============================================================
-    // Init
+    // Init Custom Selects
     // ============================================================
-    initCustomSelect();
+    let langSelectControl, pkgSelectControl;
+
+    function applyVim9Restrictions() {
+        const isVim9 = (state.langValue === 'vim9');
+
+        // Package Manager
+        if (isVim9) {
+            pkgSelectControl.setValue('minimal', 'Minimal');
+            state.pkgValue = 'minimal';
+            pkgSelectControl.disable(true);
+        } else {
+            pkgSelectControl.disable(false);
+        }
+
+        // LazyVim Extra
+        const lazyCheckbox = DOM.chkLazyVimExtra;
+        const lazyLabel = DOM.lazyVimExtraLabel;
+        if (isVim9) {
+            lazyCheckbox.disabled = true;
+            lazyCheckbox.checked = false;
+            lazyLabel.style.opacity = '0.5';
+            lazyLabel.style.cursor = 'not-allowed';
+            lazyLabel.title = 'LazyVim Extra richiede LuaScript e Lazy.nvim';
+        } else {
+            lazyCheckbox.disabled = false;
+            lazyLabel.style.opacity = '1';
+            lazyLabel.style.cursor = 'pointer';
+            lazyLabel.title = '';
+        }
+    }
+
+    function initSelects() {
+        langSelectControl = initCustomSelect(
+            DOM.customSelectLang,
+            DOM.selectHiddenLang,
+            function(value) {
+                state.langValue = value;
+                applyVim9Restrictions();
+                if (state.configLoaded) {
+                    generateConfig();
+                }
+            }
+        );
+
+        pkgSelectControl = initCustomSelect(
+            DOM.customSelectPkg,
+            DOM.selectHiddenPkg,
+            function(value) {
+                state.pkgValue = value;
+                if (state.configLoaded) {
+                    generateConfig();
+                }
+            }
+        );
+
+        // Stato iniziale
+        applyVim9Restrictions();
+    }
+
+    // ============================================================
+    // Start
+    // ============================================================
+    initSelects();
     loadConfig();
 })();

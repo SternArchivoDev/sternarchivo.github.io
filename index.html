@@ -30,16 +30,32 @@
 
         <!-- Controls -->
         <section class="controls">
+            <!-- Linguaggio -->
+            <div class="control-group">
+                <label>Linguaggio</label>
+                <div class="custom-select" id="langSelect">
+                    <div class="select-trigger">
+                        <span class="select-value">LuaScript</span>
+                        <span class="select-arrow">▼</span>
+                    </div>
+                    <div class="select-options">
+                        <div class="select-option selected" data-value="lua">LuaScript</div>
+                        <div class="select-option" data-value="vim9">Vimscript9</div>
+                    </div>
+                    <input type="hidden" id="langHidden" value="lua" />
+                </div>
+            </div>
+
+            <!-- Package Manager -->
             <div class="control-group">
                 <label>Package Manager</label>
-                <!-- Custom Select -->
                 <div class="custom-select" id="pkgManager">
                     <div class="select-trigger">
                         <span class="select-value">Lazy.nvim</span>
                         <span class="select-arrow">▼</span>
                     </div>
                     <div class="select-options">
-                        <div class="select-option" data-value="lazy">Lazy.nvim</div>
+                        <div class="select-option selected" data-value="lazy">Lazy.nvim</div>
                         <div class="select-option" data-value="minimal">Minimal</div>
                         <div class="select-option" data-value="other">Other</div>
                     </div>
@@ -47,6 +63,7 @@
                 </div>
             </div>
 
+            <!-- Checkboxes -->
             <div class="control-group checkboxes">
                 <label class="checkbox-label">
                     <input type="checkbox" id="chkNoComments" />
@@ -58,7 +75,7 @@
                     <span class="checkmark"></span>
                     Generate ZIP
                 </label>
-                <label class="checkbox-label">
+                <label class="checkbox-label" id="lazyVimExtraLabel" title="Disponibile solo con LuaScript e Lazy.nvim">
                     <input type="checkbox" id="chkLazyVimExtra" />
                     <span class="checkmark"></span>
                     LazyVim Extra
