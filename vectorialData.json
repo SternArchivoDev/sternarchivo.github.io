@@ -1,6 +1,6 @@
 {
   "RepoName": "StitchVim",
-  "version": "0.0.0-alpha9",
+  "version": "0.0.0-alpha10",
   "snippets": {
     "lazy": {
       "commented": "-- [[ Bootstrap Lazy.nvim ]]\n-- local lazypath = vim.fn.stdpath(\"data\") .. \"/lazy/lazy.nvim\"\n-- if not vim.loop.fs_stat(lazypath) then\n--   vim.fn.system({\n--     \"git\", \"clone\", \"--filter=blob:none\",\n--     \"https://github.com/folke/lazy.nvim.git\",\n--     \"--branch=stable\", lazypath\n--   })\n-- end\n-- vim.opt.rtp:prepend(lazypath)\n--\n-- require(\"lazy\").setup({\n--   { import = \"plugins\" },\n-- })",
