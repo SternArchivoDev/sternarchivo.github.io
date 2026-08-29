@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="it">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>StitchVim – Config Generator</title>
+        <link rel="stylesheet" href="style.css" />
+        <!-- Caricamento font monospace per stile terminale -->
+        <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+    </head>
+    <body>
+        <div class="container">
+            <!-- Header -->
+            <header class="header">
+                <div class="logo">
+                    <span class="logo-icon">🧵</span>
+                    <h1>StitchVim</h1>
+                    <span class="subtitle">Config Generator</span>
+                    <span class="version-badge" id="versionBadge">v?</span>
+                </div>
+                <div class="badge">⚡ 100% client‑side</div>
+            </header>
+
+            <!-- Pannello parametri -->
+            <section class="panel">
+                <div class="panel-row">
+                    <div class="panel-group">
+                        <label for="pkgManager">Package Manager</label>
+                        <select id="pkgManager">
+                            <option value="lazy">Lazy.nvim</option>
+                            <option value="minimal">Minimal</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                    <div class="panel-group panel-checkboxes">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="chkNoComments" />
+                            <span>No Comments</span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="chkArchive" checked />
+                            <span>Generate ZIP</span>
+                        </label>
+                    </div>
+                    <button class="btn-generate" id="generateBtn">🚀 Genera</button>
+                </div>
+            </section>
+
+            <!-- Messaggi di stato -->
+            <div id="statusMessage" class="status-message" role="alert"></div>
+
+            <!-- Area di anteprima -->
+            <section class="preview">
+                <div class="file-list" id="fileList">
+                    <div class="empty-state">Nessun file generato</div>
+                </div>
+                <div class="file-content" id="fileContent">
+                    <div class="empty-state">Seleziona un file dalla lista</div>
+                </div>
+            </section>
+
+            <!-- Pulsanti azioni -->
+            <div class="actions">
+                <button class="btn-download" id="downloadZipBtn" disabled>📦 Scarica ZIP</button>
+            </div>
+        </div>
+
+        <!-- Librerie -->
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+        <script src="app.js"></script>
+    </body>
+</html>
