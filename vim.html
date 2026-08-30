@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>StitchVim – Vimscript9</title>
+    <link rel="icon" href="icons/stitchfav.ico" type="image/x-icon" />
+    <link rel="shortcut icon" href="icons/stitchfav.ico" type="image/x-icon" />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body data-page="vim">
+    <div class="app generator">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <a href="index.html" style="text-decoration:none; display:flex; align-items:center; gap:0.6rem;">
+                    <img src="icons/stitchnormal.png" alt="StitchVim Logo" class="logo-img" />
+                    <h1>StitchVim</h1>
+                </a>
+                <span class="subtitle">Vimscript9</span>
+                <span class="version-badge" id="versionBadge">v?</span>
+            </div>
+            <a href="index.html" class="badge" style="text-decoration:none;">← Home</a>
+        </header>
+
+        <!-- Controls -->
+        <section class="controls">
+            <!-- Package Manager (solo opzioni valide per Vimscript) -->
+            <div class="control-group">
+                <label>Package Manager</label>
+                <div class="custom-select" id="pkgManager">
+                    <div class="select-trigger">
+                        <span class="select-value" id="pkgValueDisplay">Minimal</span>
+                        <span class="select-arrow">▼</span>
+                    </div>
+                    <div class="select-options" id="pkgOptionsContainer">
+                        <!-- generate via JS -->
+                    </div>
+                    <input type="hidden" id="pkgManagerHidden" value="minimal" />
+                </div>
+            </div>
+
+            <!-- Checkboxes (senza LazyVim Extra) -->
+            <div class="control-group checkboxes">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="chkNoComments" />
+                    <span class="checkmark"></span>
+                    <span>No Comments</span>
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="chkArchive" checked />
+                    <span class="checkmark"></span>
+                    <span>Generate ZIP</span>
+                </label>
+            </div>
+
+            <button class="btn-generate" id="generateBtn">🚀 Genera</button>
+        </section>
+
+        <!-- Status -->
+        <div id="statusMessage" class="status-message" role="alert"></div>
+
+        <!-- Preview -->
+        <section class="preview" id="previewContainer">
+            <div class="file-list" id="fileList">
+                <div class="empty-state">Nessun file generato</div>
+            </div>
+            <div class="file-content" id="fileContent">
+                <div class="empty-state">Seleziona un file dalla lista</div>
+            </div>
+        </section>
+
+        <!-- Actions -->
+        <div class="actions">
+            <button class="btn-reset" id="resetBtn" disabled>🔄 Reset</button>
+            <button class="btn-download" id="downloadZipBtn" disabled>📦 Scarica ZIP</button>
+        </div>
+
+        <footer class="app-footer">
+            <i class="bi bi-heart-fill"></i> StitchVim – Vimscript9 
+        </footer>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

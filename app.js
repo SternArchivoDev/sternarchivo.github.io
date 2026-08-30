@@ -1,25 +1,24 @@
 /**
- * StitchVim – Neovim Config Generator
- * Modular JavaScript con custom select animato
+ * StitchVim – Config Generator (unificato per Lua e Vim)
+ * Rileva la pagina tramite data-page e configura i controlli di conseguenza.
  */
 (function () {
     'use strict';
 
     // ============================================================
-    // DOM References
+    // Rilevamento pagina
+    // ============================================================
+    const page = document.body.dataset.page || 'home'; // 'lua', 'vim', 'home'
+
+    // ============================================================
+    // DOM references
     // ============================================================
     const DOM = {
-        customSelectLang: document.getElementById('langSelect'),
-        selectTriggerLang: document.querySelector('#langSelect .select-trigger'),
-        selectValueLang: document.querySelector('#langSelect .select-value'),
-        selectOptionsLang: document.querySelector('#langSelect .select-options'),
-        selectHiddenLang: document.getElementById('langHidden'),
-
-        customSelectPkg: document.getElementById('pkgManager'),
-        selectTriggerPkg: document.querySelector('#pkgManager .select-trigger'),
-        selectValuePkg: document.querySelector('#pkgManager .select-value'),
-        selectOptionsPkg: document.querySelector('#pkgManager .select-options'),
-        selectHiddenPkg: document.getElementById('pkgManagerHidden'),
+        pkgManager: document.getElementById('pkgManager'),
+        pkgTrigger: document.querySelector('#pkgManager .select-trigger'),
+        pkgValueDisplay: document.getElementById('pkgValueDisplay'),
+        pkgOptions: document.getElementById('pkgOptionsContainer'),
+        pkgHidden: document.getElementById('pkgManagerHidden'),
 
         chkNoComments: document.getElementById('chkNoComments'),
         chkArchive: document.getElementById('chkArchive'),
@@ -35,8 +34,14 @@
         previewContainer: document.getElementById('previewContainer'),
     };
 
+    // Se non siamo in una pagina di generazione (home), carica solo la versione
+    if (page === 'home') {
+        fetchVersion();
+        return;
+    }
+
     // ============================================================
-    // State
+    // Stato
     // ============================================================
     const state = {
         config: null,
@@ -44,104 +49,66 @@
         selectedPath: null,
         isLoading: false,
         configLoaded: false,
-        pkgValue: 'lazy',
-        langValue: 'lua',
+        pkgValue: page === 'lua' ? 'lazy' : 'minimal',
+        langValue: page === 'lua' ? 'lua' : 'vim9',
         flashTimeout: null,
     };
 
     // ============================================================
-    // Custom Select Logic (generica)
+    // i18n semplificato
     // ============================================================
-    function initCustomSelect(container, hiddenInput, onSelect) {
-        const trigger = container.querySelector('.select-trigger');
-        const options = container.querySelector('.select-options');
-        const valueSpan = container.querySelector('.select-value');
-
-        trigger.addEventListener('click', (e) => {
-            e.stopPropagation();
-            const isOpen = container.classList.contains('open');
-            if (isOpen) closeSelect();
-            else openSelect();
-        });
-
-        options.addEventListener('click', (e) => {
-            const option = e.target.closest('.select-option');
-            if (!option) return;
-            const value = option.dataset.value;
-            const label = option.textContent.trim();
-            valueSpan.textContent = label;
-            hiddenInput.value = value;
-
-            options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
-            option.classList.add('selected');
-
-            closeSelect();
-
-            if (typeof onSelect === 'function') {
-                onSelect(value);
-            }
-        });
-
-        document.addEventListener('click', (e) => {
-            if (!container.contains(e.target)) closeSelect();
-        });
-
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') closeSelect();
-        });
-
-        function openSelect() {
-            container.classList.add('open');
-            trigger.classList.add('active');
+    const lang = navigator.language.startsWith('it') ? 'it' : 'en';
+    const i18n = {
+        it: {
+            no_files: 'Nessun file generato',
+            select_file: 'Seleziona un file dalla lista',
+            generate_btn: '🚀 Genera',
+            reset_btn: '🔄 Reset',
+            download_zip_btn: '📦 Scarica ZIP',
+        },
+        en: {
+            no_files: 'No files generated',
+            select_file: 'Select a file from the list',
+            generate_btn: '🚀 Generate',
+            reset_btn: '🔄 Reset',
+            download_zip_btn: '📦 Download ZIP',
         }
+    };
+    const t = i18n[lang] || i18n.en;
 
-        function closeSelect() {
-            container.classList.remove('open');
-            trigger.classList.remove('active');
-        }
-
-        return {
-            setValue: function(value, label) {
-                const option = options.querySelector(`.select-option[data-value="${value}"]`);
-                if (option) {
-                    valueSpan.textContent = label || option.textContent.trim();
-                    hiddenInput.value = value;
-                    options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
-                    option.classList.add('selected');
-                }
-            },
-            disable: function(disabled) {
-                if (disabled) {
-                    container.style.opacity = '0.5';
-                    trigger.style.pointerEvents = 'none';
-                } else {
-                    container.style.opacity = '1';
-                    trigger.style.pointerEvents = '';
-                }
+    // ============================================================
+    // Version
+    // ============================================================
+    async function fetchVersion() {
+        try {
+            const res = await fetch('vectorialData.json?t=' + Date.now());
+            if (res.ok) {
+                const data = await res.json();
+                if (DOM.versionBadge) DOM.versionBadge.textContent = `v${data.version}`;
             }
-        };
+        } catch (_) {}
     }
 
     // ============================================================
     // UI Helpers
     // ============================================================
-    function showStatus(message, type = 'info') {
+    function showStatus(msg, type = 'info') {
         const el = DOM.statusMsg;
-        el.textContent = message;
+        if (!el) return;
+        el.textContent = msg;
         el.className = `status-message ${type}`;
         el.style.display = 'block';
     }
-
     function hideStatus() {
-        DOM.statusMsg.style.display = 'none';
+        if (DOM.statusMsg) DOM.statusMsg.style.display = 'none';
     }
 
     function setLoading(loading) {
         state.isLoading = loading;
         DOM.generateBtn.disabled = loading;
         DOM.generateBtn.innerHTML = loading
-            ? '<span class="spinner"></span> Generazione...'
-            : '<span>🚀 Genera</span>';
+            ? `<span class="spinner"></span> ${lang === 'it' ? 'Generazione...' : 'Generating...'}`
+            : (lang === 'it' ? '🚀 Genera' : '🚀 Generate');
     }
 
     function setButtonsEnabled(enabled) {
@@ -153,141 +120,499 @@
     }
 
     // ============================================================
-    // Reset Logic
+    // Custom Select (generico)
     // ============================================================
-    function resetGenerator() {
-        if (state.flashTimeout) {
-            clearTimeout(state.flashTimeout);
-            state.flashTimeout = null;
-        }
-        DOM.previewContainer.classList.remove('flash');
+    function initCustomSelect(container, hiddenInput, onSelect) {
+        const trigger = container.querySelector('.select-trigger');
+        const options = container.querySelector('.select-options');
+        const valueSpan = container.querySelector('.select-value');
 
-        state.files = null;
-        state.selectedPath = null;
+        trigger.addEventListener('click', (e) => {
+            e.stopPropagation();
+            container.classList.toggle('open');
+            trigger.classList.toggle('active');
+        });
 
-        DOM.fileList.innerHTML = `<div class="empty-state">Nessun file generato</div>`;
-        DOM.fileContent.innerHTML = `<div class="empty-state">Seleziona un file dalla lista</div>`;
+        options.addEventListener('click', (e) => {
+            const option = e.target.closest('.select-option');
+            if (!option) return;
+            const value = option.dataset.value;
+            const label = option.textContent.trim();
+            valueSpan.textContent = label;
+            hiddenInput.value = value;
+            options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+            option.classList.add('selected');
+            container.classList.remove('open');
+            trigger.classList.remove('active');
+            if (typeof onSelect === 'function') onSelect(value);
+        });
 
-        DOM.downloadBtn.disabled = true;
-        DOM.resetBtn.disabled = true;
-
-        hideStatus();
-        showStatus('🔄 Stato resettato.', 'info');
-        setTimeout(hideStatus, 2000);
-    }
-
-    // ============================================================
-    // Template Engine
-    // ============================================================
-    function renderTemplate(template, context) {
-        return template.replace(/\{(\w+)\}/g, (_, key) => {
-            return Object.hasOwn(context, key) ? context[key] : '';
+        document.addEventListener('click', (e) => {
+            if (!container.contains(e.target)) {
+                container.classList.remove('open');
+                trigger.classList.remove('active');
+            }
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                container.classList.remove('open');
+                trigger.classList.remove('active');
+            }
         });
     }
 
     // ============================================================
-    // Load Configuration
+    // Package Manager options in base alla pagina
+    // ============================================================
+    function getPkgOptions() {
+        if (state.langValue === 'vim9') {
+            return [
+                { value: 'minimal', label: 'Minimal (nativo)' },
+                { value: 'vimplug', label: 'Vim Plug' },
+                { value: 'other', label: 'Other' }
+            ];
+        } else {
+            return [
+                { value: 'lazy', label: 'Lazy.nvim' },
+                { value: 'minimal', label: 'Minimal' },
+                { value: 'other', label: 'Other' }
+            ];
+        }
+    }
+
+    function updatePkgOptions() {
+        const container = DOM.pkgOptions;
+        const hidden = DOM.pkgHidden;
+        const valueSpan = DOM.pkgValueDisplay;
+        container.innerHTML = '';
+        const options = getPkgOptions();
+        let first = null;
+        options.forEach(opt => {
+            const div = document.createElement('div');
+            div.className = 'select-option';
+            div.dataset.value = opt.value;
+            div.textContent = opt.label;
+            container.appendChild(div);
+            if (!first) first = opt.value;
+        });
+        const valid = options.map(o => o.value);
+        if (!valid.includes(state.pkgValue)) state.pkgValue = first;
+        const selected = container.querySelector(`.select-option[data-value="${state.pkgValue}"]`);
+        if (selected) {
+            valueSpan.textContent = selected.textContent;
+            hidden.value = state.pkgValue;
+            container.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+            selected.classList.add('selected');
+        }
+        container.querySelectorAll('.select-option').forEach(el => {
+            el.addEventListener('click', (e) => {
+                const option = e.target.closest('.select-option');
+                if (!option) return;
+                const value = option.dataset.value;
+                const label = option.textContent.trim();
+                valueSpan.textContent = label;
+                hidden.value = value;
+                container.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+                option.classList.add('selected');
+                DOM.pkgManager.classList.remove('open');
+                DOM.pkgTrigger.classList.remove('active');
+                state.pkgValue = value;
+                if (state.configLoaded) generateConfig();
+            });
+        });
+    }
+
+    // ============================================================
+    // Template engine
+    // ============================================================
+    function renderTemplate(template, context) {
+        return template.replace(/\{(\w+)\}/g, (_, key) => Object.hasOwn(context, key) ? context[key] : '');
+    }
+
+    // ============================================================
+    // Load config
     // ============================================================
     async function loadConfig() {
         setButtonsEnabled(false);
-        showStatus('⏳ Caricamento configurazione...', 'info');
-
-        const urls = [
-            `/vectorialData.json?t=${Date.now()}`,
-            `vectorialData.json?t=${Date.now()}`,
-        ];
-
+        showStatus(lang === 'it' ? '⏳ Caricamento configurazione...' : '⏳ Loading configuration...', 'info');
+        const urls = [`/vectorialData.json?t=${Date.now()}`, `vectorialData.json?t=${Date.now()}`];
         let data = null;
-        let lastError = null;
-
         for (const url of urls) {
             try {
-                const response = await fetch(url, { cache: 'no-cache' });
-                if (response.ok) {
-                    data = await response.json();
-                    console.log(`✅ Configurazione caricata da: ${url}`);
-                    break;
-                }
-            } catch (err) {
-                lastError = err;
-                console.warn(`❌ Tentativo fallito: ${url}`, err);
-            }
+                const res = await fetch(url, { cache: 'no-cache' });
+                if (res.ok) { data = await res.json(); break; }
+            } catch (_) {}
         }
-
         if (!data) {
-            console.error('❌ Tutti i tentativi di caricamento falliti:', lastError);
-            showStatus(
-                '❌ Impossibile caricare vectorialData.json. Verifica che il file esista nella stessa directory di index.html.',
-                'danger'
-            );
+            showStatus('❌ Impossibile caricare vectorialData.json', 'danger');
             DOM.versionBadge.textContent = 'v?';
             setButtonsEnabled(false);
             return;
         }
-
         if (!data.snippets || !data.fileTemplates) {
-            showStatus('❌ Struttura JSON non valida: mancano "snippets" o "fileTemplates".', 'danger');
+            showStatus('❌ JSON non valido', 'danger');
             DOM.versionBadge.textContent = 'v?';
             setButtonsEnabled(false);
             return;
         }
-
         state.config = data;
         state.configLoaded = true;
-        console.log('✅ Configurazione caricata:', data);
-
-        if (DOM.versionBadge && data.version) {
-            DOM.versionBadge.textContent = `v${data.version}`;
-        }
-
+        DOM.versionBadge.textContent = `v${data.version}`;
         hideStatus();
         setButtonsEnabled(true);
         generateConfig();
     }
 
     // ============================================================
-    // Generate Configuration
+    // Contenuto dei comandi Stitch* per Vimscript (nuova versione)
+    // ============================================================
+    function getStitchCommandsActive() {
+        return `" ============================================
+" Stitch Native Package Manager (Vimscript) – ACTIVE
+" ============================================
+"
+" Comandi disponibili:
+"   :StitchInstall <repo>  - clona un repository Git e lo carica
+"   :StitchUpdate [name]   - aggiorna uno o tutti i pacchetti (git pull senza argomenti)
+"   :StitchList            - elenca i pacchetti installati
+"   :StitchClean           - rimuove pacchetti orfani (vuoti)
+"   :StitchInstallAll      - installa tutti i pacchetti elencati in g:stitch_packages
+"
+" Per gestire le dipendenze, definisci una lista di repository in g:stitch_packages
+" nel tuo init.vim o in un file dedicato.
+" Esempio:
+"   let g:stitch_packages = [
+"     \ 'https://github.com/folke/trouble.nvim',
+"     \ 'https://github.com/nvim-treesitter/nvim-treesitter',
+"   \ ]
+" Poi esegui :StitchInstallAll per installarli tutti.
+"
+" ============================================
+
+function! StitchGetPackDir() abort
+    let packdir = $HOME . '/.vim/pack/stitch/start'
+    if !isdirectory(packdir)
+        call mkdir(packdir, 'p')
+    endif
+    return packdir
+endfunction
+
+command! -nargs=1 StitchInstall call s:StitchInstall(<f-args>)
+function! s:StitchInstall(repo) abort
+    let l:packdir = StitchGetPackDir()
+    let l:name = fnamemodify(a:repo, ':t')
+    let l:target = l:packdir . '/' . l:name
+    
+    if isdirectory(l:target)
+        echom '[Stitch] Pacchetto già installato: ' . l:name
+        return
+    endif
+    
+    echom '[Stitch] Clonazione di ' . a:repo . ' ...'
+    let l:cmd = 'git clone --depth=1 ' . a:repo . ' ' . l:target
+    call system(l:cmd)
+    
+    if v:shell_error == 0
+        exec 'packadd ' . l:name
+        echom '[Stitch] Pacchetto installato e caricato: ' . l:name
+    else
+        echohl ErrorMsg
+        echom '[Stitch] Errore durante il clone di ' . a:repo
+        echohl None
+    endif
+endfunction
+
+command! -nargs=? StitchUpdate call s:StitchUpdate(<f-args>)
+function! s:StitchUpdate(...) abort
+    let l:packdir = StitchGetPackDir()
+    if a:0 == 0
+        " Aggiorna tutti i pacchetti
+        for l:dir in split(glob(l:packdir . '/*'), '\n')
+            if isdirectory(l:dir)
+                let l:name = fnamemodify(l:dir, ':t')
+                echo '[Stitch] Aggiornamento ' . l:name . ' ...'
+                call system('cd ' . l:dir . ' && git pull')
+                if v:shell_error == 0
+                    echo '[Stitch] Aggiornato: ' . l:name
+                else
+                    echohl WarningMsg
+                    echo '[Stitch] Errore aggiornamento ' . l:name
+                    echohl None
+                endif
+            endif
+        endfor
+    else
+        let l:name = a:1
+        let l:target = l:packdir . '/' . l:name
+        if isdirectory(l:target)
+            echo '[Stitch] Aggiornamento ' . l:name . ' ...'
+            call system('cd ' . l:target . ' && git pull')
+            if v:shell_error == 0
+                echo '[Stitch] Aggiornato: ' . l:name
+            else
+                echohl ErrorMsg
+                echo '[Stitch] Errore aggiornamento ' . l:name
+                echohl None
+            endif
+        else
+            echohl ErrorMsg
+            echo '[Stitch] Pacchetto non trovato: ' . l:name
+            echohl None
+        endif
+    endif
+endfunction
+
+command! StitchList call s:StitchList()
+function! s:StitchList() abort
+    let l:packdir = StitchGetPackDir()
+    let l:packages = split(glob(l:packdir . '/*'), '\n')
+    if empty(l:packages)
+        echo '[Stitch] Nessun pacchetto installato.'
+    else
+        echo '[Stitch] Pacchetti installati:'
+        for l:pkg in l:packages
+            echo '  - ' . fnamemodify(l:pkg, ':t')
+        endfor
+    endif
+endfunction
+
+command! StitchClean call s:StitchClean()
+function! s:StitchClean() abort
+    let l:packdir = StitchGetPackDir()
+    let l:packages = split(glob(l:packdir . '/*'), '\n')
+    let l:removed = 0
+    for l:pkg in l:packages
+        if isdirectory(l:pkg) && glob(l:pkg . '/*') == ''
+            call delete(l:pkg, 'rf')
+            let l:removed += 1
+            echo '[Stitch] Rimosso pacchetto vuoto: ' . fnamemodify(l:pkg, ':t')
+        endif
+    endfor
+    if l:removed == 0
+        echo '[Stitch] Nessun pacchetto orfano da rimuovere.'
+    else
+        echo '[Stitch] Rimossi ' . l:removed . ' pacchetti orfani.'
+    endif
+endfunction
+
+" Comando per installare tutti i pacchetti definiti in g:stitch_packages
+command! StitchInstallAll call s:StitchInstallAll()
+function! s:StitchInstallAll() abort
+    if !exists('g:stitch_packages')
+        echom '[Stitch] g:stitch_packages non definito. Imposta la lista dei repository.'
+        return
+    endif
+    if type(g:stitch_packages) != v:t_list
+        echom '[Stitch] g:stitch_packages deve essere una lista.'
+        return
+    endif
+    for repo in g:stitch_packages
+        call s:StitchInstall(repo)
+    endfor
+endfunction
+
+" ============================================
+" Fine del sistema nativo Stitch
+" ============================================`;
+    }
+
+    function getStitchCommandsCommented() {
+        return `" ============================================
+" Stitch Native Package Manager (Vimscript) – COMMENTED
+" ============================================
+"
+" Questo file contiene i comandi nativi Stitch per la gestione dei pacchetti.
+" Per attivarli, rimuovi i commenti dalle righe sottostanti.
+"
+" ============================================
+
+" function! StitchGetPackDir() abort
+"     let packdir = $HOME . '/.vim/pack/stitch/start'
+"     if !isdirectory(packdir)
+"         call mkdir(packdir, 'p')
+"     endif
+"     return packdir
+" endfunction
+"
+" command! -nargs=1 StitchInstall call s:StitchInstall(<f-args>)
+" function! s:StitchInstall(repo) abort
+"     let l:packdir = StitchGetPackDir()
+"     let l:name = fnamemodify(a:repo, ':t')
+"     let l:target = l:packdir . '/' . l:name
+"     
+"     if isdirectory(l:target)
+"         echom '[Stitch] Pacchetto già installato: ' . l:name
+"         return
+"     endif
+"     
+"     echom '[Stitch] Clonazione di ' . a:repo . ' ...'
+"     let l:cmd = 'git clone --depth=1 ' . a:repo . ' ' . l:target
+"     call system(l:cmd)
+"     
+"     if v:shell_error == 0
+"         exec 'packadd ' . l:name
+"         echom '[Stitch] Pacchetto installato e caricato: ' . l:name
+"     else
+"         echohl ErrorMsg
+"         echom '[Stitch] Errore durante il clone di ' . a:repo
+"         echohl None
+"     endif
+" endfunction
+"
+" command! -nargs=? StitchUpdate call s:StitchUpdate(<f-args>)
+" function! s:StitchUpdate(...) abort
+"     let l:packdir = StitchGetPackDir()
+"     if a:0 == 0
+"         for l:dir in split(glob(l:packdir . '/*'), '\n')
+"             if isdirectory(l:dir)
+"                 let l:name = fnamemodify(l:dir, ':t')
+"                 echo '[Stitch] Aggiornamento ' . l:name . ' ...'
+"                 call system('cd ' . l:dir . ' && git pull')
+"                 if v:shell_error == 0
+"                     echo '[Stitch] Aggiornato: ' . l:name
+"                 else
+"                     echohl WarningMsg
+"                     echo '[Stitch] Errore aggiornamento ' . l:name
+"                     echohl None
+"                 endif
+"             endif
+"         endfor
+"     else
+"         let l:name = a:1
+"         let l:target = l:packdir . '/' . l:name
+"         if isdirectory(l:target)
+"             echo '[Stitch] Aggiornamento ' . l:name . ' ...'
+"             call system('cd ' . l:target . ' && git pull')
+"             if v:shell_error == 0
+"                 echo '[Stitch] Aggiornato: ' . l:name
+"             else
+"                 echohl ErrorMsg
+"                 echo '[Stitch] Errore aggiornamento ' . l:name
+"                 echohl None
+"             endif
+"         else
+"             echohl ErrorMsg
+"             echo '[Stitch] Pacchetto non trovato: ' . l:name
+"             echohl None
+"         endif
+"     endif
+" endfunction
+"
+" command! StitchList call s:StitchList()
+" function! s:StitchList() abort
+"     let l:packdir = StitchGetPackDir()
+"     let l:packages = split(glob(l:packdir . '/*'), '\n')
+"     if empty(l:packages)
+"         echo '[Stitch] Nessun pacchetto installato.'
+"     else
+"         echo '[Stitch] Pacchetti installati:'
+"         for l:pkg in l:packages
+"             echo '  - ' . fnamemodify(l:pkg, ':t')
+"         endfor
+"     endif
+" endfunction
+"
+" command! StitchClean call s:StitchClean()
+" function! s:StitchClean() abort
+"     let l:packdir = StitchGetPackDir()
+"     let l:packages = split(glob(l:packdir . '/*'), '\n')
+"     let l:removed = 0
+"     for l:pkg in l:packages
+"         if isdirectory(l:pkg) && glob(l:pkg . '/*') == ''
+"             call delete(l:pkg, 'rf')
+"             let l:removed += 1
+"             echo '[Stitch] Rimosso pacchetto vuoto: ' . fnamemodify(l:pkg, ':t')
+"         endif
+"     endfor
+"     if l:removed == 0
+"         echo '[Stitch] Nessun pacchetto orfano da rimuovere.'
+"     else
+"         echo '[Stitch] Rimossi ' . l:removed . ' pacchetti orfani.'
+"     endif
+" endfunction
+"
+" command! StitchInstallAll call s:StitchInstallAll()
+" function! s:StitchInstallAll() abort
+"     if !exists('g:stitch_packages')
+"         echom '[Stitch] g:stitch_packages non definito. Imposta la lista dei repository.'
+"         return
+"     endif
+"     if type(g:stitch_packages) != v:t_list
+"         echom '[Stitch] g:stitch_packages deve essere una lista.'
+"         return
+"     endif
+"     for repo in g:stitch_packages
+"         call s:StitchInstall(repo)
+"     endfor
+" endfunction
+
+" ============================================
+" Fine del sistema nativo Stitch
+" ============================================`;
+    }
+
+    // ============================================================
+    // Generazione file per Vimscript Minimal (nativo)
+    // ============================================================
+    function generateVimMinimalFiles(context, templates) {
+        const noComments = DOM.chkNoComments.checked;
+        const files = {};
+
+        // 1) init.vim – usa lo snippet minimale (solo il caricamento dei moduli user)
+        const initTemplate = templates.find(t => t.path === 'init.vim');
+        if (initTemplate) {
+            const minimalSnippet = `" Load user configuration\nsource vim/user/init.vim`;
+            const initContext = { ...context, snippet: minimalSnippet };
+            files['init.vim'] = renderTemplate(initTemplate.template, initContext);
+        }
+
+        // 2) Tutti gli altri template tranne plugin/example.vim
+        for (const tmpl of templates) {
+            if (tmpl.path === 'init.vim') continue;
+            if (tmpl.path === 'plugin/example.vim') continue; // Non lo vogliamo
+            files[tmpl.path] = renderTemplate(tmpl.template, context);
+        }
+
+        // 3) plugin/stitch.vim – contiene i comandi nativi Stitch* (attivi o commentati)
+        files['plugin/stitch.vim'] = noComments ? getStitchCommandsActive() : getStitchCommandsCommented();
+
+        return files;
+    }
+
+    // ============================================================
+    // Generate
     // ============================================================
     function generateConfig() {
         if (!state.configLoaded || !state.config) {
-            showStatus('Configurazione non disponibile. Ricarica la pagina.', 'warning');
+            showStatus('Configurazione non disponibile.', 'warning');
             return;
         }
-
         if (state.isLoading) return;
         setLoading(true);
         hideStatus();
-
         try {
-            const lang = state.langValue; // 'lua' o 'vim9'
+            const lang = state.langValue;
             const pkg = state.pkgValue;
             const noComments = DOM.chkNoComments.checked;
-            const lazyVimExtra = DOM.chkLazyVimExtra.checked;
+            const lazyVimExtra = DOM.chkLazyVimExtra ? DOM.chkLazyVimExtra.checked : false;
 
-            const genDate = new Intl.DateTimeFormat('it-IT', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: false,
-                timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            const genDate = new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-US', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: false
             }).format(new Date()).replace(/\//g, '-');
-
-            const pkgName = pkg.charAt(0).toUpperCase() + pkg.slice(1);
 
             const langSnippets = state.config.snippets[lang] || state.config.snippets.lua;
             const snippetKey = noComments ? 'active' : 'commented';
-            const snippet = langSnippets[pkg]?.[snippetKey] || langSnippets.other[snippetKey] || '';
+            let snippet = langSnippets[pkg]?.[snippetKey];
+            if (!snippet) snippet = langSnippets.minimal?.[snippetKey] || langSnippets.other?.[snippetKey] || '';
 
             const options = state.config.optionsContent?.[lang]?.[snippetKey] || '';
             const keymaps = state.config.keymapsContent?.[lang]?.[snippetKey] || '';
             const autocmds = state.config.autocmdsContent?.[lang]?.[snippetKey] || '';
-
             const version = state.config.version || '0.0.0';
 
-            let welcome = noComments ? '' : '';
+            let welcome = '';
             if (lang === 'lua') {
                 welcome = noComments
                     ? `vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`
@@ -306,57 +631,59 @@
                 genDate,
                 version,
                 pkg,
-                pkgName,
-                welcome,
+                welcome
             };
 
-            const files = {};
+            let files = {};
             const templates = state.config.fileTemplates[lang] || state.config.fileTemplates.lua;
 
-            const notifyTemplate = `-- nvim-notify: fancy notifications for Neovim
--- https://github.com/rcarriga/nvim-notify
-
-return {
-    "rcarriga/nvim-notify",
-    opts = {
-        -- top_down = false,      -- notifiche dal basso verso l'alto
-        -- timeout = 3000,        -- durata in ms
-        -- render = "default",    -- "default", "compact", "minimal"
-        -- stages = "fade",       -- "fade", "slide", "static"
-    },
-    config = function(_, opts)
-        local notify = require("notify")
-        notify.setup(opts)
-        vim.notify = notify
-    end,
-}
-`;
-
-            for (const tmpl of templates) {
-                if (lang === 'lua' && pkg !== 'lazy' && tmpl.path.startsWith('lua/plugins/')) {
-                    continue;
-                }
-                if (lang === 'lua' && lazyVimExtra && pkg === 'lazy' && tmpl.path === 'lua/plugins/example.lua') {
-                    continue;
-                }
-                files[tmpl.path] = renderTemplate(tmpl.template, context);
+            // ============================================================
+            // CASO SPECIALE: Vimscript + Minimal (nativo)
+            // ============================================================
+            if (lang === 'vim9' && pkg === 'minimal') {
+                files = generateVimMinimalFiles(context, templates);
             }
+            // ============================================================
+            // CASO GENERALE: tutti gli altri (Lua, Vim con vimplug/other)
+            // ============================================================
+            else {
+                const notifyTemplate = `-- nvim-notify configuration for LazyVim
+return {
+  "rcarriga/nvim-notify",
+  opts = {
+    stages = "slide",
+    timeout = 3000,
+    background_colour = "#000000",
+  },
+  config = function(_, opts)
+    local notify = require("notify")
+    notify.setup(opts)
+    vim.notify = notify
+  end,
+}`;
 
-            if (lang === 'lua' && lazyVimExtra && pkg === 'lazy') {
-                files['lua/plugins/notify.lua'] = notifyTemplate;
+                for (const tmpl of templates) {
+                    // Salta file plugins se non è Lazy (solo Lua)
+                    if (lang === 'lua' && pkg !== 'lazy' && tmpl.path.startsWith('lua/plugins/')) continue;
+                    // Se LazyVim Extra, sostituisci example.lua con notify.lua
+                    if (lang === 'lua' && lazyVimExtra && pkg === 'lazy' && tmpl.path === 'lua/plugins/example.lua') {
+                        continue;
+                    }
+                    files[tmpl.path] = renderTemplate(tmpl.template, context);
+                }
+                // Aggiungi notify.lua solo se LazyVim Extra e Lua e Lazy
+                if (lang === 'lua' && lazyVimExtra && pkg === 'lazy') {
+                    files['lua/plugins/notify.lua'] = notifyTemplate;
+                }
             }
 
             state.files = files;
             renderFileList(files);
             selectFirstFile(files);
-
             showStatus(`✅ Generati ${Object.keys(files).length} file`, 'success');
             setButtonsEnabled(true);
-
-            if (state.flashTimeout) {
-                clearTimeout(state.flashTimeout);
-                state.flashTimeout = null;
-            }
+            // Flash border
+            if (state.flashTimeout) clearTimeout(state.flashTimeout);
             DOM.previewContainer.classList.remove('flash');
             void DOM.previewContainer.offsetWidth;
             DOM.previewContainer.classList.add('flash');
@@ -364,137 +691,105 @@ return {
                 DOM.previewContainer.classList.remove('flash');
                 state.flashTimeout = null;
             }, 5000);
-
-        } catch (error) {
-            console.error('❌ Errore generazione:', error);
-            showStatus(`❌ Errore durante la generazione: ${error.message}`, 'danger');
+        } catch (err) {
+            showStatus(`❌ ${err.message}`, 'danger');
+            console.error(err);
         }
-
         setLoading(false);
     }
 
     // ============================================================
-    // Render File List
+    // File list and preview
     // ============================================================
     function renderFileList(files) {
+        const container = DOM.fileList;
+        container.innerHTML = '';
         const paths = Object.keys(files).sort();
-
         if (paths.length === 0) {
-            DOM.fileList.innerHTML = `<div class="empty-state">Nessun file</div>`;
+            container.innerHTML = `<div class="empty-state">${t.no_files}</div>`;
             return;
         }
-
-        let html = '';
-        for (const path of paths) {
-            const isActive = path === state.selectedPath ? 'active' : '';
+        paths.forEach(path => {
+            const div = document.createElement('div');
+            div.className = 'file-item';
+            div.dataset.path = path;
             const icon = getFileIcon(path);
-            html += `
-                <div class="file-item ${isActive}" data-path="${path}">
-                    <span class="icon">${icon}</span>
-                    ${path}
-                </div>
-            `;
-        }
-
-        DOM.fileList.innerHTML = html;
-
-        DOM.fileList.querySelectorAll('.file-item').forEach((el) => {
-            el.addEventListener('click', () => {
-                const path = el.dataset.path;
-                if (path) selectFile(path);
-            });
+            div.innerHTML = `<span class="icon">${icon}</span><span>${path}</span>`;
+            div.addEventListener('click', () => selectFile(path));
+            container.appendChild(div);
         });
     }
 
     function getFileIcon(path) {
-        if (path.endsWith('.lua')) return '🔧';
-        if (path.endsWith('.vim')) return '⚙️';
-        if (path.endsWith('.md')) return '📝';
+        if (path.endsWith('.lua')) return '📘';
+        if (path.endsWith('.vim') || path.endsWith('.vim9')) return '📗';
+        if (path.endsWith('.md')) return '📄';
+        if (path.endsWith('.json')) return '📦';
         return '📄';
     }
 
     function selectFirstFile(files) {
         const paths = Object.keys(files).sort();
-        if (paths.length > 0) {
-            selectFile(paths[0]);
+        if (paths.length > 0) selectFile(paths[0]);
+        else {
+            DOM.fileContent.innerHTML = `<div class="empty-state">${t.select_file}</div>`;
         }
     }
 
-    // ============================================================
-    // Select & Show File
-    // ============================================================
     function selectFile(path) {
-        if (!state.files || !state.files[path]) return;
-
         state.selectedPath = path;
-
-        DOM.fileList.querySelectorAll('.file-item').forEach((el) => {
+        document.querySelectorAll('.file-item').forEach(el => {
             el.classList.toggle('active', el.dataset.path === path);
         });
-
-        const content = state.files[path];
-        const ext = path.split('.').pop();
-
-        const meta = `
-            <div class="file-meta">
-                <span>📁 ${path}</span>
-                <span>${content.length} caratteri</span>
-            </div>
-        `;
-
-        const highlighted = highlightCode(content, ext);
-        DOM.fileContent.innerHTML = meta + `<pre>${highlighted}</pre>`;
-
-        DOM.fileContent.style.opacity = '0';
-        requestAnimationFrame(() => {
-            DOM.fileContent.style.transition = 'opacity 0.15s ease';
-            DOM.fileContent.style.opacity = '1';
-        });
+        const content = state.files[path] || '';
+        const ext = path.split('.').pop().toLowerCase();
+        let htmlContent = '';
+        if (ext === 'lua' || ext === 'vim' || ext === 'vim9') {
+            htmlContent = highlightCode(content, ext);
+        } else {
+            htmlContent = `<pre>${escapeHtml(content)}</pre>`;
+        }
+        const meta = `<div class="file-meta"><span>${path}</span><span>${content.split('\n').length} righe</span></div>`;
+        DOM.fileContent.innerHTML = meta + htmlContent;
     }
 
     // ============================================================
     // Syntax Highlighting
     // ============================================================
     function highlightCode(content, ext) {
-        if (ext === 'lua') {
-            return highlightLua(content);
-        } else if (ext === 'vim') {
-            return highlightVim(content);
-        }
-        return escapeHtml(content);
+        if (ext === 'lua') return highlightLua(content);
+        if (ext === 'vim' || ext === 'vim9') return highlightVim(content);
+        return `<pre>${escapeHtml(content)}</pre>`;
     }
 
     function highlightLua(content) {
-        const patterns = [
-            { regex: /(--\[\[[\s\S]*?\]\]|--.*)/g, css: 'comment' },
-            { regex: /(['"])(?:(?!\1).)*?\1/g, css: 'string' },
-            { regex: /\b(if|then|else|elseif|end|function|local|return|for|while|do|break|nil|true|false|and|or|not)\b/g, css: 'keyword' },
-            { regex: /\b([A-Za-z_]\w*)\s*(?=\()/g, css: 'function' },
-            { regex: /\b(\d+\.?\d*)\b/g, css: 'number' },
-        ];
-        let html = escapeHtml(content);
-        for (const pattern of patterns) {
-            html = html.replace(pattern.regex, (match) => {
-                return `<span class="${pattern.css}">${match}</span>`;
-            });
-        }
-        return html;
+        const lines = content.split('\n');
+        const out = lines.map(line => {
+            let html = escapeHtml(line);
+            html = html.replace(/(--.*)$/, '<span class="comment">$1</span>');
+            html = html.replace(/(\"[^\"]*\")/g, '<span class="string">$1</span>');
+            html = html.replace(/(\'[^\']*\')/g, '<span class="string">$1</span>');
+            const keywords = ['function', 'local', 'if', 'then', 'else', 'elseif', 'for', 'while', 'do', 'end', 'return', 'break', 'nil', 'true', 'false'];
+            const kwRegex = new RegExp('\\b(' + keywords.join('|') + ')\\b', 'g');
+            html = html.replace(kwRegex, '<span class="keyword">$1</span>');
+            html = html.replace(/(\w+)\s*\(/g, '<span class="function">$1</span>(');
+            return html;
+        }).join('\n');
+        return `<pre>${out}</pre>`;
     }
 
     function highlightVim(content) {
-        const patterns = [
-            { regex: /^(\s*)"[^\n]*/gm, css: 'comment' },
-            { regex: /(['"])(?:(?!\1).)*?\1/g, css: 'string' },
-            { regex: /\b(if|then|else|elseif|endif|function|endfunction|return|for|while|do|break|set|let|unlet|source|runtime|autocmd|augroup|endaugroup|nnoremap|vnoremap|inoremap|command|echom|echo|call)\b/g, css: 'keyword' },
-            { regex: /\b(\d+\.?\d*)\b/g, css: 'number' },
-        ];
-        let html = escapeHtml(content);
-        for (const pattern of patterns) {
-            html = html.replace(pattern.regex, (match) => {
-                return `<span class="${pattern.css}">${match}</span>`;
-            });
-        }
-        return html;
+        const lines = content.split('\n');
+        const out = lines.map(line => {
+            let html = escapeHtml(line);
+            html = html.replace(/("[^"]*)$/, '<span class="comment">$1</span>');
+            html = html.replace(/("[^"]*")/g, '<span class="string">$1</span>');
+            const keywords = ['function', 'endfunction', 'command', 'if', 'else', 'endif', 'let', 'set', 'echom', 'call', 'source'];
+            const kwRegex = new RegExp('\\b(' + keywords.join('|') + ')\\b', 'g');
+            html = html.replace(kwRegex, '<span class="keyword">$1</span>');
+            return html;
+        }).join('\n');
+        return `<pre>${out}</pre>`;
     }
 
     function escapeHtml(text) {
@@ -508,128 +803,102 @@ return {
     // ============================================================
     async function downloadZip() {
         if (!DOM.chkArchive.checked) {
-            showStatus('⚠️ Abilita "Generate ZIP" per scaricare il pacchetto.', 'warning');
+            showStatus('⚠️ Abilita "Generate ZIP"', 'warning');
             return;
         }
-
         if (!state.files || Object.keys(state.files).length === 0) {
-            showStatus('Nessun file da impacchettare.', 'warning');
+            showStatus('Nessun file.', 'warning');
             return;
         }
-
         hideStatus();
         DOM.downloadBtn.disabled = true;
-        DOM.downloadBtn.innerHTML = '<span class="spinner"></span> Creazione ZIP...';
-
+        DOM.downloadBtn.innerHTML = `<span class="spinner"></span> ${lang === 'it' ? 'Creazione ZIP...' : 'Creating ZIP...'}`;
         try {
             const zip = new JSZip();
-
             for (const [path, content] of Object.entries(state.files)) {
                 zip.file(path, content);
             }
-
             const blob = await zip.generateAsync({ type: 'blob' });
-            const timestamp = new Date().toISOString().slice(0, 19).replace(/[:-]/g, '');
-            const filename = `nvim_config_${timestamp}.zip`;
-
-            const url = URL.createObjectURL(blob);
+            const ts = new Date().toISOString().slice(0,19).replace(/[:-]/g,'');
             const a = document.createElement('a');
-            a.href = url;
-            a.download = filename;
+            a.href = URL.createObjectURL(blob);
+            a.download = `nvim_config_${ts}.zip`;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-
-            showStatus('✅ ZIP scaricato con successo.', 'success');
-
-        } catch (error) {
-            console.error('❌ Errore ZIP:', error);
-            showStatus(`❌ Errore creazione ZIP: ${error.message}`, 'danger');
+            URL.revokeObjectURL(a.href);
+            showStatus('✅ ZIP scaricato.', 'success');
+        } catch (err) {
+            showStatus(`❌ ${err.message}`, 'danger');
         }
-
-        DOM.downloadBtn.innerHTML = '📦 Scarica ZIP';
+        DOM.downloadBtn.innerHTML = lang === 'it' ? '📦 Scarica ZIP' : '📦 Download ZIP';
         setButtonsEnabled(true);
     }
 
     // ============================================================
-    // Event Listeners
+    // Reset
     // ============================================================
-    DOM.generateBtn.addEventListener('click', generateConfig);
-    DOM.downloadBtn.addEventListener('click', downloadZip);
-    DOM.resetBtn.addEventListener('click', resetGenerator);
-    DOM.chkNoComments.addEventListener('change', generateConfig);
-    DOM.chkLazyVimExtra.addEventListener('change', generateConfig);
-
-    DOM.chkArchive.addEventListener('change', () => {
-        setButtonsEnabled(true);
-    });
+    function resetGenerator() {
+        if (state.flashTimeout) clearTimeout(state.flashTimeout);
+        DOM.previewContainer.classList.remove('flash');
+        state.files = null;
+        state.selectedPath = null;
+        DOM.fileList.innerHTML = `<div class="empty-state">${t.no_files}</div>`;
+        DOM.fileContent.innerHTML = `<div class="empty-state">${t.select_file}</div>`;
+        DOM.downloadBtn.disabled = true;
+        DOM.resetBtn.disabled = true;
+        hideStatus();
+        showStatus(lang === 'it' ? '🔄 Stato resettato.' : '🔄 State reset.', 'info');
+        setTimeout(hideStatus, 2000);
+    }
 
     // ============================================================
-    // Init Custom Selects
+    // Inizializzazione
     // ============================================================
-    let langSelectControl, pkgSelectControl;
+    function init() {
+        // Inizializza il custom select per il package manager
+        initCustomSelect(DOM.pkgManager, DOM.pkgHidden, function(value) {
+            state.pkgValue = value;
+            if (state.configLoaded) generateConfig();
+        });
 
-    function applyVim9Restrictions() {
-        const isVim9 = (state.langValue === 'vim9');
+        // Popola le opzioni del package manager in base al linguaggio
+        updatePkgOptions();
 
-        // Package Manager
-        if (isVim9) {
-            pkgSelectControl.setValue('minimal', 'Minimal');
+        // Se Vimscript, nascondi LazyVim Extra e forza minimal?
+        if (state.langValue === 'vim9') {
+            if (DOM.lazyVimExtraLabel) {
+                DOM.lazyVimExtraLabel.style.display = 'none';
+            }
+            // Forza il package manager a minimal
             state.pkgValue = 'minimal';
-            pkgSelectControl.disable(true);
-        } else {
-            pkgSelectControl.disable(false);
+            updatePkgOptions();
+            const hidden = DOM.pkgHidden;
+            const valueSpan = DOM.pkgValueDisplay;
+            const options = DOM.pkgOptions;
+            const selected = options.querySelector(`.select-option[data-value="minimal"]`);
+            if (selected) {
+                valueSpan.textContent = selected.textContent;
+                hidden.value = 'minimal';
+                options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+                selected.classList.add('selected');
+            }
         }
 
-        // LazyVim Extra
-        const lazyCheckbox = DOM.chkLazyVimExtra;
-        const lazyLabel = DOM.lazyVimExtraLabel;
-        if (isVim9) {
-            lazyCheckbox.disabled = true;
-            lazyCheckbox.checked = false;
-            lazyLabel.style.opacity = '0.5';
-            lazyLabel.style.cursor = 'not-allowed';
-            lazyLabel.title = 'LazyVim Extra richiede LuaScript e Lazy.nvim';
-        } else {
-            lazyCheckbox.disabled = false;
-            lazyLabel.style.opacity = '1';
-            lazyLabel.style.cursor = 'pointer';
-            lazyLabel.title = '';
+        // Event listeners
+        DOM.generateBtn.addEventListener('click', generateConfig);
+        DOM.downloadBtn.addEventListener('click', downloadZip);
+        DOM.resetBtn.addEventListener('click', resetGenerator);
+        DOM.chkNoComments.addEventListener('change', generateConfig);
+        DOM.chkArchive.addEventListener('change', () => setButtonsEnabled(true));
+        if (DOM.chkLazyVimExtra) {
+            DOM.chkLazyVimExtra.addEventListener('change', generateConfig);
         }
+
+        // Carica la configurazione
+        loadConfig();
     }
 
-    function initSelects() {
-        langSelectControl = initCustomSelect(
-            DOM.customSelectLang,
-            DOM.selectHiddenLang,
-            function(value) {
-                state.langValue = value;
-                applyVim9Restrictions();
-                if (state.configLoaded) {
-                    generateConfig();
-                }
-            }
-        );
-
-        pkgSelectControl = initCustomSelect(
-            DOM.customSelectPkg,
-            DOM.selectHiddenPkg,
-            function(value) {
-                state.pkgValue = value;
-                if (state.configLoaded) {
-                    generateConfig();
-                }
-            }
-        );
-
-        // Stato iniziale
-        applyVim9Restrictions();
-    }
-
-    // ============================================================
-    // Start
-    // ============================================================
-    initSelects();
-    loadConfig();
+    // Avvia
+    init();
 })();
