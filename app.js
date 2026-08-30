@@ -1,6 +1,6 @@
 /**
- * StitchVim – Config Generator (unificato per Lua e Vim)
- * Rileva la pagina tramite data-page e configura i controlli di conseguenza.
+ * StitchVim – Config Generator (solo Vimscript9)
+ * Rileva la pagina tramite data-page (solo 'vim' o 'home')
  */
 (function () {
     'use strict';
@@ -8,7 +8,7 @@
     // ============================================================
     // Rilevamento pagina
     // ============================================================
-    const page = document.body.dataset.page || 'home'; // 'lua', 'vim', 'home'
+    const page = document.body.dataset.page || 'home'; // 'vim', 'home'
 
     // ============================================================
     // DOM references
@@ -22,8 +22,6 @@
 
         chkNoComments: document.getElementById('chkNoComments'),
         chkArchive: document.getElementById('chkArchive'),
-        chkLazyVimExtra: document.getElementById('chkLazyVimExtra'),
-        lazyVimExtraLabel: document.getElementById('lazyVimExtraLabel'),
         generateBtn: document.getElementById('generateBtn'),
         downloadBtn: document.getElementById('downloadZipBtn'),
         resetBtn: document.getElementById('resetBtn'),
@@ -41,7 +39,7 @@
     }
 
     // ============================================================
-    // Stato
+    // Stato (solo Vimscript9)
     // ============================================================
     const state = {
         config: null,
@@ -49,8 +47,8 @@
         selectedPath: null,
         isLoading: false,
         configLoaded: false,
-        pkgValue: page === 'lua' ? 'lazy' : 'minimal',
-        langValue: page === 'lua' ? 'lua' : 'vim9',
+        pkgValue: 'minimal',
+        langValue: 'vim9',
         flashTimeout: null,
     };
 
@@ -162,22 +160,14 @@
     }
 
     // ============================================================
-    // Package Manager options in base alla pagina
+    // Package Manager options (solo Vimscript)
     // ============================================================
     function getPkgOptions() {
-        if (state.langValue === 'vim9') {
-            return [
-                { value: 'minimal', label: 'Minimal (nativo)' },
-                { value: 'vimplug', label: 'Vim Plug' },
-                { value: 'other', label: 'Other' }
-            ];
-        } else {
-            return [
-                { value: 'lazy', label: 'Lazy.nvim' },
-                { value: 'minimal', label: 'Minimal' },
-                { value: 'other', label: 'Other' }
-            ];
-        }
+        return [
+            { value: 'minimal', label: 'Minimal (nativo)' },
+            { value: 'vimplug', label: 'Vim Plug' },
+            { value: 'other', label: 'Other' }
+        ];
     }
 
     function updatePkgOptions() {
@@ -264,7 +254,7 @@
     }
 
     // ============================================================
-    // Contenuto dei comandi Stitch* per Vimscript (nuova versione)
+    // Contenuto dei comandi Stitch* per Vimscript
     // ============================================================
     function getStitchCommandsActive() {
         return `" ============================================
@@ -326,7 +316,6 @@ command! -nargs=? StitchUpdate call s:StitchUpdate(<f-args>)
 function! s:StitchUpdate(...) abort
     let l:packdir = StitchGetPackDir()
     if a:0 == 0
-        " Aggiorna tutti i pacchetti
         for l:dir in split(glob(l:packdir . '/*'), '\n')
             if isdirectory(l:dir)
                 let l:name = fnamemodify(l:dir, ':t')
@@ -395,7 +384,6 @@ function! s:StitchClean() abort
     endif
 endfunction
 
-" Comando per installare tutti i pacchetti definiti in g:stitch_packages
 command! StitchInstallAll call s:StitchInstallAll()
 function! s:StitchInstallAll() abort
     if !exists('g:stitch_packages')
@@ -558,7 +546,6 @@ endfunction
         const noComments = DOM.chkNoComments.checked;
         const files = {};
 
-        // 1) init.vim – usa lo snippet minimale (solo il caricamento dei moduli user)
         const initTemplate = templates.find(t => t.path === 'init.vim');
         if (initTemplate) {
             const minimalSnippet = `" Load user configuration\nsource vim/user/init.vim`;
@@ -566,14 +553,12 @@ endfunction
             files['init.vim'] = renderTemplate(initTemplate.template, initContext);
         }
 
-        // 2) Tutti gli altri template tranne plugin/example.vim
         for (const tmpl of templates) {
             if (tmpl.path === 'init.vim') continue;
-            if (tmpl.path === 'plugin/example.vim') continue; // Non lo vogliamo
+            if (tmpl.path === 'plugin/example.vim') continue;
             files[tmpl.path] = renderTemplate(tmpl.template, context);
         }
 
-        // 3) plugin/stitch.vim – contiene i comandi nativi Stitch* (attivi o commentati)
         files['plugin/stitch.vim'] = noComments ? getStitchCommandsActive() : getStitchCommandsCommented();
 
         return files;
@@ -594,7 +579,6 @@ endfunction
             const lang = state.langValue;
             const pkg = state.pkgValue;
             const noComments = DOM.chkNoComments.checked;
-            const lazyVimExtra = DOM.chkLazyVimExtra ? DOM.chkLazyVimExtra.checked : false;
 
             const genDate = new Intl.DateTimeFormat(lang === 'it' ? 'it-IT' : 'en-US', {
                 year: 'numeric', month: '2-digit', day: '2-digit',
@@ -602,7 +586,7 @@ endfunction
                 hour12: false
             }).format(new Date()).replace(/\//g, '-');
 
-            const langSnippets = state.config.snippets[lang] || state.config.snippets.lua;
+            const langSnippets = state.config.snippets[lang] || state.config.snippets.vim9;
             const snippetKey = noComments ? 'active' : 'commented';
             let snippet = langSnippets[pkg]?.[snippetKey];
             if (!snippet) snippet = langSnippets.minimal?.[snippetKey] || langSnippets.other?.[snippetKey] || '';
@@ -612,16 +596,9 @@ endfunction
             const autocmds = state.config.autocmdsContent?.[lang]?.[snippetKey] || '';
             const version = state.config.version || '0.0.0';
 
-            let welcome = '';
-            if (lang === 'lua') {
-                welcome = noComments
-                    ? `vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`
-                    : `-- vim.notify("Neovim configuration loaded (StitchVim ${version})", vim.log.levels.INFO)`;
-            } else {
-                welcome = noComments
-                    ? `echom "Neovim configuration loaded (StitchVim ${version})"`
-                    : `\" echom "Neovim configuration loaded (StitchVim ${version})"`;
-            }
+            const welcome = noComments
+                ? `echom "Neovim configuration loaded (StitchVim ${version})"`
+                : `\" echom "Neovim configuration loaded (StitchVim ${version})"`;
 
             const context = {
                 snippet,
@@ -635,45 +612,13 @@ endfunction
             };
 
             let files = {};
-            const templates = state.config.fileTemplates[lang] || state.config.fileTemplates.lua;
+            const templates = state.config.fileTemplates[lang] || state.config.fileTemplates.vim9;
 
-            // ============================================================
-            // CASO SPECIALE: Vimscript + Minimal (nativo)
-            // ============================================================
-            if (lang === 'vim9' && pkg === 'minimal') {
+            if (pkg === 'minimal') {
                 files = generateVimMinimalFiles(context, templates);
-            }
-            // ============================================================
-            // CASO GENERALE: tutti gli altri (Lua, Vim con vimplug/other)
-            // ============================================================
-            else {
-                const notifyTemplate = `-- nvim-notify configuration for LazyVim
-return {
-  "rcarriga/nvim-notify",
-  opts = {
-    stages = "slide",
-    timeout = 3000,
-    background_colour = "#000000",
-  },
-  config = function(_, opts)
-    local notify = require("notify")
-    notify.setup(opts)
-    vim.notify = notify
-  end,
-}`;
-
+            } else {
                 for (const tmpl of templates) {
-                    // Salta file plugins se non è Lazy (solo Lua)
-                    if (lang === 'lua' && pkg !== 'lazy' && tmpl.path.startsWith('lua/plugins/')) continue;
-                    // Se LazyVim Extra, sostituisci example.lua con notify.lua
-                    if (lang === 'lua' && lazyVimExtra && pkg === 'lazy' && tmpl.path === 'lua/plugins/example.lua') {
-                        continue;
-                    }
                     files[tmpl.path] = renderTemplate(tmpl.template, context);
-                }
-                // Aggiungi notify.lua solo se LazyVim Extra e Lua e Lazy
-                if (lang === 'lua' && lazyVimExtra && pkg === 'lazy') {
-                    files['lua/plugins/notify.lua'] = notifyTemplate;
                 }
             }
 
@@ -682,7 +627,6 @@ return {
             selectFirstFile(files);
             showStatus(`✅ Generati ${Object.keys(files).length} file`, 'success');
             setButtonsEnabled(true);
-            // Flash border
             if (state.flashTimeout) clearTimeout(state.flashTimeout);
             DOM.previewContainer.classList.remove('flash');
             void DOM.previewContainer.offsetWidth;
@@ -699,7 +643,7 @@ return {
     }
 
     // ============================================================
-    // File list and preview
+    // File list and preview (invariati)
     // ============================================================
     function renderFileList(files) {
         const container = DOM.fileList;
@@ -762,21 +706,7 @@ return {
         return `<pre>${escapeHtml(content)}</pre>`;
     }
 
-    function highlightLua(content) {
-        const lines = content.split('\n');
-        const out = lines.map(line => {
-            let html = escapeHtml(line);
-            html = html.replace(/(--.*)$/, '<span class="comment">$1</span>');
-            html = html.replace(/(\"[^\"]*\")/g, '<span class="string">$1</span>');
-            html = html.replace(/(\'[^\']*\')/g, '<span class="string">$1</span>');
-            const keywords = ['function', 'local', 'if', 'then', 'else', 'elseif', 'for', 'while', 'do', 'end', 'return', 'break', 'nil', 'true', 'false'];
-            const kwRegex = new RegExp('\\b(' + keywords.join('|') + ')\\b', 'g');
-            html = html.replace(kwRegex, '<span class="keyword">$1</span>');
-            html = html.replace(/(\w+)\s*\(/g, '<span class="function">$1</span>(');
-            return html;
-        }).join('\n');
-        return `<pre>${out}</pre>`;
-    }
+    function highlightLua(content) { /* non usato ma mantenuto per consistenza */ return `<pre>${escapeHtml(content)}</pre>`; }
 
     function highlightVim(content) {
         const lines = content.split('\n');
@@ -856,49 +786,35 @@ return {
     // Inizializzazione
     // ============================================================
     function init() {
-        // Inizializza il custom select per il package manager
         initCustomSelect(DOM.pkgManager, DOM.pkgHidden, function(value) {
             state.pkgValue = value;
             if (state.configLoaded) generateConfig();
         });
 
-        // Popola le opzioni del package manager in base al linguaggio
         updatePkgOptions();
 
-        // Se Vimscript, nascondi LazyVim Extra e forza minimal?
-        if (state.langValue === 'vim9') {
-            if (DOM.lazyVimExtraLabel) {
-                DOM.lazyVimExtraLabel.style.display = 'none';
-            }
-            // Forza il package manager a minimal
-            state.pkgValue = 'minimal';
-            updatePkgOptions();
-            const hidden = DOM.pkgHidden;
-            const valueSpan = DOM.pkgValueDisplay;
-            const options = DOM.pkgOptions;
-            const selected = options.querySelector(`.select-option[data-value="minimal"]`);
-            if (selected) {
-                valueSpan.textContent = selected.textContent;
-                hidden.value = 'minimal';
-                options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
-                selected.classList.add('selected');
-            }
+        // Imposta il valore iniziale come "minimal"
+        state.pkgValue = 'minimal';
+        updatePkgOptions();
+        const hidden = DOM.pkgHidden;
+        const valueSpan = DOM.pkgValueDisplay;
+        const options = DOM.pkgOptions;
+        const selected = options.querySelector(`.select-option[data-value="minimal"]`);
+        if (selected) {
+            valueSpan.textContent = selected.textContent;
+            hidden.value = 'minimal';
+            options.querySelectorAll('.select-option').forEach(el => el.classList.remove('selected'));
+            selected.classList.add('selected');
         }
 
-        // Event listeners
         DOM.generateBtn.addEventListener('click', generateConfig);
         DOM.downloadBtn.addEventListener('click', downloadZip);
         DOM.resetBtn.addEventListener('click', resetGenerator);
         DOM.chkNoComments.addEventListener('change', generateConfig);
         DOM.chkArchive.addEventListener('change', () => setButtonsEnabled(true));
-        if (DOM.chkLazyVimExtra) {
-            DOM.chkLazyVimExtra.addEventListener('change', generateConfig);
-        }
 
-        // Carica la configurazione
         loadConfig();
     }
 
-    // Avvia
     init();
 })();
